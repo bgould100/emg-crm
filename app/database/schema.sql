@@ -1,3 +1,4 @@
+
 CREATE TABLE leads (
     id BIGSERIAL PRIMARY KEY,
     lead_id VARCHAR(30) UNIQUE NOT NULL,
@@ -15,7 +16,6 @@ CREATE TABLE leads (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-
 CREATE TABLE contractors (
     id BIGSERIAL PRIMARY KEY,
     contractor_id VARCHAR(30) UNIQUE NOT NULL,
@@ -31,27 +31,28 @@ CREATE TABLE contractors (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-
 CREATE TABLE opportunities (
     id BIGSERIAL PRIMARY KEY,
     opportunity_id VARCHAR(40) UNIQUE NOT NULL,
     lead_id BIGINT NOT NULL REFERENCES leads(id),
     contractor_id BIGINT NOT NULL REFERENCES contractors(id),
-    status VARCHAR(30) NOT NULL DEFAULT 'SENT',
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
     match_score INTEGER,
     sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     responded_at TIMESTAMP,
     expires_at TIMESTAMP,
     accepted_at TIMESTAMP,
     declined_at TIMESTAMP,
-
+    expiration_paused BOOLEAN NOT NULL DEFAULT FALSE,
+    expiration_override_reason TEXT,
+    expiration_override_by VARCHAR,
     UNIQUE (lead_id, contractor_id)
 );
-
 
 CREATE TABLE jobs (
     id BIGSERIAL PRIMARY KEY,
     job_id VARCHAR(40) UNIQUE NOT NULL,
+    opportunity_id BIGINT NOT NULL UNIQUE REFERENCES opportunities(id),
     lead_id BIGINT NOT NULL REFERENCES leads(id),
     contractor_id BIGINT NOT NULL REFERENCES contractors(id),
     status VARCHAR(40) NOT NULL DEFAULT 'QUOTE_IN_PROGRESS',
@@ -59,7 +60,6 @@ CREATE TABLE jobs (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
 
 CREATE TABLE photos (
     id BIGSERIAL PRIMARY KEY,
@@ -72,7 +72,6 @@ CREATE TABLE photos (
     content_type VARCHAR(100),
     uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
 
 CREATE TABLE status_history (
     id BIGSERIAL PRIMARY KEY,
@@ -87,33 +86,37 @@ CREATE TABLE status_history (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE outbox_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_key VARCHAR UNIQUE NOT NULL,
+    event_type VARCHAR NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMPTZ,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    claimed_until TIMESTAMPTZ
+);
 
-CREATE INDEX idx_leads_zip_code
-    ON leads(zip_code);
+CREATE INDEX idx_leads_zip_code ON leads(zip_code);
+CREATE INDEX idx_leads_service_type ON leads(service_type);
+CREATE INDEX idx_leads_status ON leads(status);
 
-CREATE INDEX idx_leads_service_type
-    ON leads(service_type);
+CREATE INDEX idx_contractors_status ON contractors(status);
 
-CREATE INDEX idx_leads_status
-    ON leads(status);
+CREATE INDEX idx_opportunities_lead_id ON opportunities(lead_id);
+CREATE INDEX idx_opportunities_contractor_id ON opportunities(contractor_id);
+CREATE INDEX idx_opportunities_status ON opportunities(status);
 
-CREATE INDEX idx_contractors_status
-    ON contractors(status);
+CREATE INDEX idx_opportunities_expiration
+    ON opportunities(expires_at)
+    WHERE status = 'PENDING' AND expiration_paused = FALSE;
 
-CREATE INDEX idx_opportunities_lead_id
-    ON opportunities(lead_id);
+CREATE INDEX idx_jobs_lead_id ON jobs(lead_id);
+CREATE INDEX idx_jobs_contractor_id ON jobs(contractor_id);
 
-CREATE INDEX idx_opportunities_contractor_id
-    ON opportunities(contractor_id);
+CREATE INDEX idx_status_history_lead_id ON status_history(lead_id);
 
-CREATE INDEX idx_opportunities_status
-    ON opportunities(status);
-
-CREATE INDEX idx_jobs_lead_id
-    ON jobs(lead_id);
-
-CREATE INDEX idx_jobs_contractor_id
-    ON jobs(contractor_id);
-
-CREATE INDEX idx_status_history_lead_id
-    ON status_history(lead_id);
+CREATE INDEX idx_outbox_unprocessed
+    ON outbox_events(created_at)
+    WHERE processed_at IS NULL;

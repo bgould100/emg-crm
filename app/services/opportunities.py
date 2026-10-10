@@ -20,6 +20,40 @@ def respond_to_opportunity(
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            # First find the lead associated with this opportunity.
+            # This lookup is intentionally unlocked: we acquire locks in
+            # a consistent order below (lead first, opportunity second).
+            cursor.execute(
+                """
+                SELECT lead_id
+                FROM opportunities
+                WHERE opportunity_id = %s
+                """,
+                (opportunity_id,),
+            )
+            initial_record = cursor.fetchone()
+
+            if initial_record is None:
+                raise LookupError("Opportunity not found.")
+
+            lead_pk = initial_record["lead_id"]
+
+            # Lock the lead first. The matching service also locks the lead,
+            # helping serialize decisions that affect bid-slot capacity.
+            cursor.execute(
+                """
+                SELECT id
+                FROM leads
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (lead_pk,),
+            )
+
+            if cursor.fetchone() is None:
+                raise LookupError("Lead not found.")
+
+            # Re-read and lock the opportunity after locking its lead.
             cursor.execute(
                 """
                 SELECT
@@ -28,16 +62,17 @@ def respond_to_opportunity(
                     o.status AS opportunity_status,
                     o.lead_id AS lead_pk,
                     o.contractor_id AS contractor_pk,
-                    l.lead_id,
+                    l.lead_id AS lead_id,
                     l.customer_name,
                     l.customer_email,
                     l.customer_phone
                 FROM opportunities o
                 JOIN leads l ON l.id = o.lead_id
                 WHERE o.opportunity_id = %s
+                  AND o.lead_id = %s
                 FOR UPDATE OF o
                 """,
-                (opportunity_id,),
+                (opportunity_id, lead_pk),
             )
             record = cursor.fetchone()
 
@@ -50,6 +85,8 @@ def respond_to_opportunity(
                 )
 
             if decision == "accept":
+                # Accept the opportunity within the same transaction
+                # used to create its job and history entry.
                 cursor.execute(
                     """
                     UPDATE opportunities
@@ -63,19 +100,24 @@ def respond_to_opportunity(
 
                 job_id = f"EMGJ-{secrets.token_hex(5).upper()}"
 
+                # Directly link the job to the accepted opportunity.
+                # The database migration must be applied before this
+                # insert can run against the updated schema.
                 cursor.execute(
                     """
                     INSERT INTO jobs (
                         job_id,
+                        opportunity_id,
                         lead_id,
                         contractor_id,
                         status
                     )
-                    VALUES (%s, %s, %s, 'QUOTE_IN_PROGRESS')
+                    VALUES (%s, %s, %s, %s, 'QUOTE_IN_PROGRESS')
                     RETURNING id, job_id
                     """,
                     (
                         job_id,
+                        record["opportunity_pk"],
                         record["lead_pk"],
                         record["contractor_pk"],
                     ),
@@ -162,9 +204,9 @@ def respond_to_opportunity(
 
             lead_id = record["lead_id"]
 
-    # The decision is committed before routing additional contractors.
+    # The decision is committed before routing replacement invitations.
     # The matcher recalculates accepted and pending counts and fills
-    # every remaining slot it can.
+    # any remaining slots it can.
     next_opportunities = route_opportunities_to_fill_slots(lead_id)
 
     result["next_opportunities"] = next_opportunities
