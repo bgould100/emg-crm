@@ -1,4 +1,4 @@
-
+﻿
 import secrets
 from typing import Any
 
@@ -51,6 +51,7 @@ def route_opportunities_to_fill_slots(
                 SELECT
                     COUNT(*) FILTER (
                         WHERE status = 'ACCEPTED'
+                          AND slot_released = FALSE
                     ) AS accepted,
                     COUNT(*) FILTER (
                         WHERE status = 'PENDING'

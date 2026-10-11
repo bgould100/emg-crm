@@ -4,7 +4,24 @@ from app.database.contractors import create_contractor
 from app.database.leads import create_lead
 from app.services.matching import route_opportunities_to_fill_slots
 from app.services.opportunities import respond_to_opportunity
+from app.services.job_status import update_job_status
+from app.services.slot_release import release_accepted_bid_slot
 
+def get_opportunity_contractor_pk(opportunity_id):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT contractor_id
+                FROM opportunities
+                WHERE opportunity_id = %s
+                """,
+                (opportunity_id,),
+            )
+            row = cursor.fetchone()
+
+    assert row is not None, f"Opportunity {opportunity_id} not found."
+    return row["contractor_id"]
 
 def test_five_bid_slots_are_replenished_after_declines():
     lead_id = None
@@ -45,6 +62,7 @@ def test_five_bid_slots_are_replenished_after_declines():
             result = respond_to_opportunity(
                 opportunity["opportunity_id"],
                 "decline",
+                get_opportunity_contractor_pk(opportunity["opportunity_id"]),
             )
             replacements = result["next_opportunities"]
 
@@ -179,7 +197,11 @@ def test_accepting_opportunity_creates_job_linked_to_that_opportunity():
         opportunity_id = opportunities[0]["opportunity_id"]
 
         # Accept it through the real service.
-        result = respond_to_opportunity(opportunity_id, "accept")
+        result = respond_to_opportunity(
+            opportunity_id,
+            "accept",
+            get_opportunity_contractor_pk(opportunity_id),
+        )
 
         assert result["status"] == "ACCEPTED"
         assert result["job_id"].startswith("EMGJ-")
@@ -221,6 +243,211 @@ def test_accepting_opportunity_creates_job_linked_to_that_opportunity():
                     if lead_row:
                         db_lead_id = lead_row["id"]
 
+                        cursor.execute(
+                            "DELETE FROM status_history WHERE lead_id = %s",
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            "DELETE FROM photos WHERE lead_id = %s",
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            "DELETE FROM jobs WHERE lead_id = %s",
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            "DELETE FROM opportunities WHERE lead_id = %s",
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            "DELETE FROM leads WHERE id = %s",
+                            (db_lead_id,),
+                        )
+
+                    if contractor_ids:
+                        cursor.execute(
+                            """
+                            DELETE FROM contractors
+                            WHERE contractor_id = ANY(%s)
+                            """,
+                            (contractor_ids,),
+                        )
+
+
+def test_admin_release_frees_capacity_and_preserves_accepted_job():
+    lead_id = None
+    contractor_ids = []
+
+    try:
+        lead = create_lead(
+            zip_code="83814",
+            service_type="Roofing",
+            description="Test accepted slot release and replacement routing.",
+            requested_bid_count=1,
+            customer_name="Slot Release Integration Test",
+            customer_email="slot-release-test@example.com",
+        )
+        lead_id = lead["lead_id"]
+
+        for number in range(3):
+            contractor = create_contractor(
+                company_name=f"EMG Slot Release Test {number}",
+                email=f"slot-release-test-{number}@example.com",
+                service_area=["83814"],
+                specialties=["Roofing"],
+            )
+            contractor_ids.append(contractor["contractor_id"])
+
+        initial = route_opportunities_to_fill_slots(lead_id)
+        assert len(initial) == 1
+        original_opportunity_id = initial[0]["opportunity_id"]
+        original_contractor_pk = get_opportunity_contractor_pk(
+            original_opportunity_id
+        )
+
+        accepted = respond_to_opportunity(
+            original_opportunity_id,
+            "accept",
+            original_contractor_pk,
+        )
+        assert accepted["status"] == "ACCEPTED"
+        job_id = accepted["job_id"]
+
+        # A contractor reporting BID_LOST does not free the accepted slot.
+        job_update = update_job_status(
+            job_id,
+            "BID_LOST",
+            original_contractor_pk,
+        )
+        assert job_update["status"] == "BID_LOST"
+
+        no_replacements = route_opportunities_to_fill_slots(lead_id)
+        assert no_replacements == []
+
+        # Explicit administrative release frees the slot and routes a replacement.
+        release_result = release_accepted_bid_slot(
+            original_opportunity_id,
+            reason="Contractor accepted in error",
+            performed_by="slot-release-test-admin",
+        )
+
+        assert release_result["slot_released"] is True
+        assert release_result["replacement_count"] == 1
+        replacement = release_result["replacement_opportunities"][0]
+        assert replacement["opportunity_id"] != original_opportunity_id
+
+        replacement_contractor_pk = get_opportunity_contractor_pk(
+            replacement["opportunity_id"]
+        )
+        assert replacement_contractor_pk != original_contractor_pk
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        o.status AS opportunity_status,
+                        o.slot_released,
+                        o.slot_released_reason,
+                        o.slot_released_by,
+                        o.slot_released_at,
+                        j.job_id,
+                        j.status AS job_status
+                    FROM opportunities o
+                    JOIN jobs j ON j.opportunity_id = o.id
+                    WHERE o.opportunity_id = %s
+                    """,
+                    (original_opportunity_id,),
+                )
+                original = cursor.fetchone()
+
+                cursor.execute(
+                    """
+                    SELECT event_type, previous_status, new_status, metadata
+                    FROM status_history
+                    WHERE opportunity_id = (
+                        SELECT id
+                        FROM opportunities
+                        WHERE opportunity_id = %s
+                    )
+                      AND event_type = 'AcceptedBidSlotReleased'
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (original_opportunity_id,),
+                )
+                audit = cursor.fetchone()
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS pending_count
+                    FROM opportunities
+                    WHERE lead_id = (
+                        SELECT id FROM leads WHERE lead_id = %s
+                    )
+                      AND status = 'PENDING'
+                    """,
+                    (lead_id,),
+                )
+                pending_count = cursor.fetchone()["pending_count"]
+
+        assert original is not None
+        assert original["opportunity_status"] == "ACCEPTED"
+        assert original["slot_released"] is True
+        assert original["slot_released_reason"] == "Contractor accepted in error"
+        assert original["slot_released_by"] == "slot-release-test-admin"
+        assert original["slot_released_at"] is not None
+        assert original["job_id"] == job_id
+        assert original["job_status"] == "BID_LOST"
+
+        assert audit is not None
+        assert audit["event_type"] == "AcceptedBidSlotReleased"
+        assert audit["previous_status"] == "ACCEPTED"
+        assert audit["new_status"] == "ACCEPTED"
+        assert audit["metadata"]["reason"] == "Contractor accepted in error"
+        assert audit["metadata"]["performed_by"] == "slot-release-test-admin"
+        assert pending_count == 1
+
+        # A second release must be rejected and must not route another invitation.
+        try:
+            release_accepted_bid_slot(
+                original_opportunity_id,
+                reason="Attempt to release again",
+                performed_by="slot-release-test-admin",
+            )
+        except ValueError as error:
+            assert "already been released" in str(error)
+        else:
+            raise AssertionError("Repeated release should have been rejected.")
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS pending_count
+                    FROM opportunities
+                    WHERE lead_id = (
+                        SELECT id FROM leads WHERE lead_id = %s
+                    )
+                      AND status = 'PENDING'
+                    """,
+                    (lead_id,),
+                )
+                assert cursor.fetchone()["pending_count"] == 1
+
+    finally:
+        # Delete only this test's lead, related records, and contractors.
+        if lead_id:
+            with get_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id FROM leads WHERE lead_id = %s",
+                        (lead_id,),
+                    )
+                    lead_row = cursor.fetchone()
+
+                    if lead_row:
+                        db_lead_id = lead_row["id"]
                         cursor.execute(
                             "DELETE FROM status_history WHERE lead_id = %s",
                             (db_lead_id,),

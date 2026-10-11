@@ -1,4 +1,4 @@
-
+﻿
 CREATE TABLE leads (
     id BIGSERIAL PRIMARY KEY,
     lead_id VARCHAR(30) UNIQUE NOT NULL,
@@ -46,7 +46,29 @@ CREATE TABLE opportunities (
     expiration_paused BOOLEAN NOT NULL DEFAULT FALSE,
     expiration_override_reason TEXT,
     expiration_override_by VARCHAR,
-    UNIQUE (lead_id, contractor_id)
+    slot_released BOOLEAN NOT NULL DEFAULT FALSE,
+    slot_released_at TIMESTAMP WITHOUT TIME ZONE,
+    slot_released_reason TEXT,
+    slot_released_by VARCHAR(255),
+    UNIQUE (lead_id, contractor_id),
+    CONSTRAINT opportunities_slot_release_audit_check
+        CHECK (
+            (
+                slot_released = FALSE
+                AND slot_released_at IS NULL
+                AND slot_released_reason IS NULL
+                AND slot_released_by IS NULL
+            )
+            OR
+            (
+                slot_released = TRUE
+                AND slot_released_at IS NOT NULL
+                AND slot_released_reason IS NOT NULL
+                AND LENGTH(BTRIM(slot_released_reason)) > 0
+                AND slot_released_by IS NOT NULL
+                AND LENGTH(BTRIM(slot_released_by)) > 0
+            )
+        )
 );
 
 CREATE TABLE jobs (
@@ -120,3 +142,41 @@ CREATE INDEX idx_status_history_lead_id ON status_history(lead_id);
 CREATE INDEX idx_outbox_unprocessed
     ON outbox_events(created_at)
     WHERE processed_at IS NULL;
+
+BEGIN;
+
+-- One login account per contractor profile.
+CREATE TABLE contractor_accounts (
+    id BIGSERIAL PRIMARY KEY,
+    contractor_id BIGINT NOT NULL UNIQUE
+        REFERENCES contractors(id),
+    email VARCHAR(255) NOT NULL,
+    password_hash TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'DISABLED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Prevent duplicate login emails, regardless of capitalization.
+CREATE UNIQUE INDEX idx_contractor_accounts_email_lower
+    ON contractor_accounts (LOWER(email));
+
+-- Store only a hash of each random session token, never the token itself.
+CREATE TABLE contractor_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT NOT NULL
+        REFERENCES contractor_accounts(id),
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+
+-- Support efficient lookup of active sessions by account.
+CREATE INDEX idx_contractor_sessions_account_active
+    ON contractor_sessions (account_id, expires_at)
+    WHERE revoked_at IS NULL;
+
+COMMIT;

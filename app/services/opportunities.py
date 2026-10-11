@@ -12,24 +12,24 @@ Decision = Literal["accept", "decline"]
 def respond_to_opportunity(
     opportunity_id: str,
     decision: Decision,
+    contractor_pk: int,
 ) -> dict[str, Any]:
-    """Record a contractor's decision and refill open bid slots."""
+    """Record a contractor's decision on their own opportunity."""
 
     if decision not in ("accept", "decline"):
         raise ValueError("Decision must be 'accept' or 'decline'.")
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            # First find the lead associated with this opportunity.
-            # This lookup is intentionally unlocked: we acquire locks in
-            # a consistent order below (lead first, opportunity second).
+            # Find the lead only if this opportunity belongs to the caller.
             cursor.execute(
                 """
                 SELECT lead_id
                 FROM opportunities
                 WHERE opportunity_id = %s
+                  AND contractor_id = %s
                 """,
-                (opportunity_id,),
+                (opportunity_id, contractor_pk),
             )
             initial_record = cursor.fetchone()
 
@@ -38,8 +38,7 @@ def respond_to_opportunity(
 
             lead_pk = initial_record["lead_id"]
 
-            # Lock the lead first. The matching service also locks the lead,
-            # helping serialize decisions that affect bid-slot capacity.
+            # Lock the lead first to preserve the existing lock order.
             cursor.execute(
                 """
                 SELECT id
@@ -53,7 +52,7 @@ def respond_to_opportunity(
             if cursor.fetchone() is None:
                 raise LookupError("Lead not found.")
 
-            # Re-read and lock the opportunity after locking its lead.
+            # Re-read and lock the opportunity, enforcing ownership again.
             cursor.execute(
                 """
                 SELECT
@@ -70,9 +69,10 @@ def respond_to_opportunity(
                 JOIN leads l ON l.id = o.lead_id
                 WHERE o.opportunity_id = %s
                   AND o.lead_id = %s
+                  AND o.contractor_id = %s
                 FOR UPDATE OF o
                 """,
-                (opportunity_id, lead_pk),
+                (opportunity_id, lead_pk, contractor_pk),
             )
             record = cursor.fetchone()
 
@@ -85,8 +85,6 @@ def respond_to_opportunity(
                 )
 
             if decision == "accept":
-                # Accept the opportunity within the same transaction
-                # used to create its job and history entry.
                 cursor.execute(
                     """
                     UPDATE opportunities
@@ -100,9 +98,6 @@ def respond_to_opportunity(
 
                 job_id = f"EMGJ-{secrets.token_hex(5).upper()}"
 
-                # Directly link the job to the accepted opportunity.
-                # The database migration must be applied before this
-                # insert can run against the updated schema.
                 cursor.execute(
                     """
                     INSERT INTO jobs (
@@ -204,9 +199,7 @@ def respond_to_opportunity(
 
             lead_id = record["lead_id"]
 
-    # The decision is committed before routing replacement invitations.
-    # The matcher recalculates accepted and pending counts and fills
-    # any remaining slots it can.
+    # The decision commits before replacement invitations are routed.
     next_opportunities = route_opportunities_to_fill_slots(lead_id)
 
     result["next_opportunities"] = next_opportunities
