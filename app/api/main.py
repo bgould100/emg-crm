@@ -370,6 +370,61 @@ def contractor_opportunity_inbox(request: Request):
         for row in rows
     ]
 
+@app.get(
+    "/contractor/opportunities/{opportunity_id}",
+    response_model=ContractorInboxOpportunity,
+)
+def contractor_opportunity_detail(
+    opportunity_id: str,
+    request: Request,
+):
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    o.opportunity_id,
+                    l.lead_id,
+                    o.status,
+                    o.match_score,
+                    o.sent_at,
+                    o.expires_at,
+                    o.expiration_paused,
+                    l.zip_code,
+                    l.service_type,
+                    l.description,
+                    l.requested_bid_count
+                FROM opportunities AS o
+                JOIN leads AS l ON l.id = o.lead_id
+                JOIN contractors AS c ON c.id = o.contractor_id
+                WHERE o.opportunity_id = %s
+                  AND c.contractor_id = %s
+                """,
+                (
+                    opportunity_id,
+                    contractor["contractor_id"],
+                ),
+            )
+            row = cursor.fetchone()
+
+    # Use the same response for nonexistent and unowned opportunities.
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Opportunity not found.",
+        )
+
+    return {
+        **row,
+        "sent_at": row["sent_at"].isoformat(),
+        "expires_at": (
+            row["expires_at"].isoformat()
+            if row["expires_at"] is not None
+            else None
+        ),
+    }
 
 @app.post("/admin/contractor-accounts", status_code=201)
 def admin_create_contractor_account(

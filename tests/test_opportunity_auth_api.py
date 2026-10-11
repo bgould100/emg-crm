@@ -353,3 +353,64 @@ def test_contractor_inbox_does_not_expose_homeowner_contacts_or_photo_keys(
         "photos",
     }
     assert forbidden_fields.isdisjoint(item.keys())
+
+def test_contractor_opportunity_detail_requires_authentication(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    api_client.cookies.clear()
+
+    response = api_client.get(
+        f"/contractor/opportunities/{data['opportunity_id']}"
+    )
+
+    assert response.status_code == 401, response.text
+
+
+def test_contractor_can_view_own_opportunity_details(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    login_contractor(api_client, data["contractor_a"])
+
+    response = api_client.get(
+        f"/contractor/opportunities/{data['opportunity_id']}"
+    )
+
+    assert response.status_code == 200, response.text
+    detail = response.json()
+
+    assert detail["opportunity_id"] == data["opportunity_id"]
+    assert detail["status"] == "PENDING"
+    assert detail["zip_code"] == "83814"
+    assert detail["service_type"] == "Roofing"
+    assert detail["description"]
+    assert detail["sent_at"]
+    assert "expires_at" in detail
+    assert "expiration_paused" in detail
+
+    forbidden_fields = {
+        "customer_name",
+        "customer_email",
+        "customer_phone",
+        "s3_key",
+        "photos",
+    }
+    assert forbidden_fields.isdisjoint(detail.keys())
+
+def test_contractor_cannot_view_another_contractors_opportunity_details(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+
+    # Contractor B knows the ID but does not own the opportunity.
+    login_contractor(api_client, data["contractor_b"])
+
+    response = api_client.get(
+        f"/contractor/opportunities/{data['opportunity_id']}"
+    )
+
+    assert response.status_code == 404, response.text
