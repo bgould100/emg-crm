@@ -89,6 +89,20 @@ class OpportunityResponse(BaseModel):
     status: str
 
 
+class ContractorInboxOpportunity(BaseModel):
+    opportunity_id: str
+    lead_id: str
+    status: str
+    match_score: int | None = None
+    sent_at: str
+    expires_at: str | None = None
+    expiration_paused: bool
+    zip_code: str
+    service_type: str
+    description: str
+    requested_bid_count: int
+
+
 class OpportunityDecision(BaseModel):
     decision: Literal["accept", "decline"]
 
@@ -308,6 +322,53 @@ def contractor_me(request: Request):
         "company_name": contractor["company_name"],
         "email": contractor["email"],
     }
+
+
+@app.get(
+    "/contractor/opportunities",
+    response_model=list[ContractorInboxOpportunity],
+)
+def contractor_opportunity_inbox(request: Request):
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    o.opportunity_id,
+                    l.lead_id,
+                    o.status,
+                    o.match_score,
+                    o.sent_at,
+                    o.expires_at,
+                    o.expiration_paused,
+                    l.zip_code,
+                    l.service_type,
+                    l.description,
+                    l.requested_bid_count
+                FROM opportunities AS o
+                JOIN leads AS l ON l.id = o.lead_id
+                JOIN contractors AS c ON c.id = o.contractor_id
+                WHERE c.contractor_id = %s
+                ORDER BY o.sent_at DESC, o.id DESC
+                """,
+                (contractor["contractor_id"],),
+            )
+            rows = cursor.fetchall()
+
+    return [
+        {
+            **row,
+            "sent_at": row["sent_at"].isoformat(),
+            "expires_at": (
+                row["expires_at"].isoformat()
+                if row["expires_at"] is not None
+                else None
+            ),
+        }
+        for row in rows
+    ]
 
 
 @app.post("/admin/contractor-accounts", status_code=201)

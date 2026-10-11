@@ -286,3 +286,70 @@ def test_contractor_can_respond_to_own_opportunity(
 
     # The API must not expose other contractors' invitation details.
     assert result["next_opportunities"] == []
+
+
+def test_contractor_inbox_requires_authentication(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    api_client.cookies.clear()
+
+    response = api_client.get("/contractor/opportunities")
+
+    assert response.status_code == 401, response.text
+
+
+def test_contractor_inbox_only_returns_own_opportunities(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+
+    # Contractor B is authenticated but does not own Contractor A's invitation.
+    login_contractor(api_client, data["contractor_b"])
+    response = api_client.get("/contractor/opportunities")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+    # Contractor A should see the invitation assigned to them.
+    api_client.cookies.clear()
+    login_contractor(api_client, data["contractor_a"])
+    response = api_client.get("/contractor/opportunities")
+
+    assert response.status_code == 200, response.text
+    opportunities = response.json()
+
+    assert len(opportunities) == 1
+    assert opportunities[0]["opportunity_id"] == data["opportunity_id"]
+    assert opportunities[0]["status"] == "PENDING"
+
+
+def test_contractor_inbox_does_not_expose_homeowner_contacts_or_photo_keys(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    login_contractor(api_client, data["contractor_a"])
+
+    response = api_client.get("/contractor/opportunities")
+
+    assert response.status_code == 200, response.text
+    opportunities = response.json()
+    assert len(opportunities) == 1
+
+    item = opportunities[0]
+    assert item["zip_code"] == "83814"
+    assert item["service_type"] == "Roofing"
+    assert item["description"]
+    assert item["sent_at"]
+    assert "expires_at" in item
+
+    forbidden_fields = {
+        "customer_name",
+        "customer_email",
+        "customer_phone",
+        "s3_key",
+        "photos",
+    }
+    assert forbidden_fields.isdisjoint(item.keys())
