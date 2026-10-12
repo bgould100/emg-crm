@@ -126,6 +126,17 @@ class JobStatusResponse(BaseModel):
     alert_queued: bool = False
 
 
+class ContractorJobResponse(BaseModel):
+    job_id: str
+    status: str
+    zip_code: str
+    service_type: str
+    description: str
+    quoted_amount: float | None = None
+    created_at: str
+    updated_at: str
+
+
 class OpportunityDecisionResponse(BaseModel):
     opportunity_id: str
     decision: str
@@ -655,6 +666,42 @@ def decide_opportunity(
 # -------------------------
 # Contractor job status
 # -------------------------
+
+# -------------------------
+# Contractor job list
+# -------------------------
+
+@app.get(
+    "/contractor/jobs",
+    response_model=list[ContractorJobResponse],
+)
+def list_contractor_jobs(request: Request):
+    require_allowed_origin(request)
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    j.job_id,
+                    j.status,
+                    l.zip_code,
+                    l.service_type,
+                    l.description,
+                    j.quoted_amount::float AS quoted_amount,
+                    j.created_at::text AS created_at,
+                    j.updated_at::text AS updated_at
+                FROM jobs AS j
+                JOIN leads AS l ON l.id = j.lead_id
+                WHERE j.contractor_id = %s
+                ORDER BY j.updated_at DESC
+                """,
+                (contractor["contractor_pk"],),
+            )
+            rows = cursor.fetchall()
+
+    return rows
 
 @app.patch(
     "/jobs/{job_id}/status",

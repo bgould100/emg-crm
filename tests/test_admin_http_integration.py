@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import urllib.error
 import urllib.request
@@ -29,6 +29,7 @@ def _contractor_pk(opportunity_id):
 def test_http_admin_release_slot_creates_replacement():
     load_dotenv()
     admin_token = os.getenv("EMG_ADMIN_TOKEN")
+    base_url = os.getenv("EMG_TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
     assert admin_token, "EMG_ADMIN_TOKEN must be configured in .env"
 
     suffix = uuid.uuid4().hex[:10]
@@ -76,7 +77,7 @@ def test_http_admin_release_slot_creates_replacement():
         ).encode("utf-8")
         request = urllib.request.Request(
             (
-                "http://127.0.0.1:8001/admin/opportunities/"
+                f"{base_url}/admin/opportunities/"
                 f"{original_opportunity_id}/release-slot"
             ),
             data=payload,
@@ -104,7 +105,7 @@ def test_http_admin_release_slot_creates_replacement():
         ).encode("utf-8")
         retry_request = urllib.request.Request(
             (
-                "http://127.0.0.1:8001/admin/opportunities/"
+                f"{base_url}/admin/opportunities/"
                 f"{original_opportunity_id}/retry-slot-routing"
             ),
             data=retry_payload,
