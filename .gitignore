@@ -8,3 +8,4 @@ dotenv
 .pytest_cache/
 test_db_connection
 check_db_connection
+test-results.txt

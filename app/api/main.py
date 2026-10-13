@@ -31,11 +31,13 @@ from app.services.slot_release import (
 )
 
 
+from app.api.financial import router as financial_router
 app = FastAPI(
     title="EliteMatch Group API",
     description="Homeowner lead intake and contractor referral backend.",
     version="0.2.0",
 )
+app.include_router(financial_router)
 
 
 # -------------------------
