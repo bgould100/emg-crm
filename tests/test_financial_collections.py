@@ -1,6 +1,8 @@
 ﻿from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import secrets
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -823,3 +825,76 @@ def test_payment_summary_updates_after_collection(financial_job):
     assert Decimal(summary["collected_total"]) == Decimal("200.00")
     assert Decimal(summary["remaining_balance"]) == Decimal("300.00")
     assert Decimal(summary["fee_accrued"]) == Decimal("20.00")
+
+
+def test_concurrent_collections_never_exceed_fee_cap(financial_job):
+    """Concurrent collections must not push cumulative EMG fees above $5,000."""
+    job_id = financial_job["job_id"]
+    session_token = financial_job["client"].cookies.get("emg_session")
+    assert session_token
+
+    # First accrue $4,999, leaving exactly $1 of fee capacity.
+    initial = _report(
+        financial_job["client"],
+        job_id,
+        "49990.00",
+        "concurrency-cap-initial",
+    )
+    assert initial.status_code == 201, initial.text
+    assert Decimal(initial.json()["fee_amount"]) == Decimal("4999.00")
+
+    barrier = Barrier(2)
+
+    def submit_collection(key):
+        # Each thread gets its own client, but uses the same authenticated session.
+        with TestClient(app) as client:
+            client.cookies.set("emg_session", session_token)
+            barrier.wait(timeout=10)
+            return _report(client, job_id, "100.00", key)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(submit_collection, "concurrency-cap-a"),
+            executor.submit(submit_collection, "concurrency-cap-b"),
+        ]
+        responses = [future.result(timeout=30) for future in futures]
+
+    assert all(response.status_code == 201 for response in responses), [
+        (response.status_code, response.text) for response in responses
+    ]
+
+    fee_amounts = [Decimal(response.json()["fee_amount"]) for response in responses]
+    assert sorted(fee_amounts) == [Decimal("0.00"), Decimal("1.00")]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(fee_amount), 0) AS total_fee
+                FROM job_fee_accruals
+                WHERE job_id = (
+                    SELECT id FROM jobs WHERE job_id = %s
+                )
+                """,
+                (job_id,),
+            )
+            total_fee = Decimal(cursor.fetchone()["total_fee"])
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM job_collections
+                WHERE job_id = (
+                    SELECT id FROM jobs WHERE job_id = %s
+                )
+                  AND idempotency_key IN (
+                    'concurrency-cap-a',
+                    'concurrency-cap-b'
+                  )
+                """,
+                (job_id,),
+            )
+            collection_count = cursor.fetchone()["count"]
+
+    assert total_fee == Decimal("5000.00")
+    assert collection_count == 2
