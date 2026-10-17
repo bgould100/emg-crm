@@ -298,7 +298,14 @@ def record_collection(
         return _result(collection, accrual, job["job_id"])
 
     except UniqueViolation as error:
-        # Covers simultaneous retries that race before either sees the other's key.
-        raise IdempotencyConflictError(
-            "This idempotency key has already been used."
-        ) from error
+        # Only translate the idempotency index violation into a conflict.
+        # Other unique-constraint failures must remain visible as real errors.
+        if (
+            error.diag.constraint_name
+            == "uq_job_collections_contractor_idempotency"
+        ):
+            raise IdempotencyConflictError(
+                "This idempotency key has already been used."
+            ) from error
+        raise
+

@@ -30,6 +30,10 @@ from app.services.slot_release import (
     retry_replacement_routing,
 )
 
+from app.services.login_rate_limit import (
+    is_login_rate_limited,
+    record_login_failure,
+)
 
 from app.api.financial import router as financial_router
 app = FastAPI(
@@ -267,7 +271,6 @@ def require_contractor(request: Request) -> dict:
 
     return contractor
 
-
 @app.post("/contractor-auth/login")
 def contractor_login(
     request: Request,
@@ -276,12 +279,43 @@ def contractor_login(
 ):
     require_allowed_origin(request)
 
+    client_ip = request.client.host if request.client else "unknown"
+
+    try:
+        if is_login_rate_limited(
+            email=login_input.email,
+            client_ip=client_ip,
+        ):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Please try again in 15 minutes.",
+                headers={"Retry-After": "900"},
+            )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Login is temporarily unavailable. Please try again later.",
+        ) from error
+
     try:
         session = login_contractor(
             email=login_input.email,
             password=login_input.password,
         )
     except ValueError as error:
+        try:
+            record_login_failure(
+                email=login_input.email,
+                client_ip=client_ip,
+            )
+        except Exception as rate_limit_error:
+            raise HTTPException(
+                status_code=503,
+                detail="Login is temporarily unavailable. Please try again later.",
+            ) from rate_limit_error
+
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password.",
@@ -303,7 +337,6 @@ def contractor_login(
         "email": session["email"],
         "expires_in": session["expires_in"],
     }
-
 
 @app.post("/contractor-auth/logout")
 def contractor_logout(

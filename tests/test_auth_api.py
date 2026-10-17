@@ -213,3 +213,66 @@ def test_login_rejects_incorrect_password(
 
     assert response.status_code == 401
     assert api_client.cookies.get("emg_session") is None
+
+def test_login_returns_429_when_rate_limited(
+    api_client,
+    active_contractor,
+    monkeypatch,
+):
+    contractor = active_contractor
+
+    monkeypatch.setattr(
+        api,
+        "is_login_rate_limited",
+        lambda **kwargs: True,
+    )
+
+    response = api_client.post(
+        "/contractor-auth/login",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "email": contractor["email"],
+            "password": contractor["password"],
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "900"
+    assert api_client.cookies.get("emg_session") is None
+
+
+def test_successful_login_does_not_record_failure(
+    api_client,
+    active_contractor,
+    monkeypatch,
+):
+    contractor = active_contractor
+
+    monkeypatch.setattr(
+        api,
+        "is_login_rate_limited",
+        lambda **kwargs: False,
+    )
+
+    def unexpected_failure_record(**kwargs):
+        raise AssertionError(
+            "A successful login must not record a failure."
+        )
+
+    monkeypatch.setattr(
+        api,
+        "record_login_failure",
+        unexpected_failure_record,
+    )
+
+    response = api_client.post(
+        "/contractor-auth/login",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "email": contractor["email"],
+            "password": contractor["password"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.cookies.get("emg_session")

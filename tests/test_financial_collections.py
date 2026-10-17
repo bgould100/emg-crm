@@ -3,6 +3,7 @@ from decimal import Decimal
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+import app.services.collections as collections_service
 
 import pytest
 from fastapi.testclient import TestClient
@@ -898,3 +899,65 @@ def test_concurrent_collections_never_exceed_fee_cap(financial_job):
 
     assert total_fee == Decimal("5000.00")
     assert collection_count == 2
+
+
+def test_collection_rolls_back_if_audit_event_creation_fails(
+    financial_job, monkeypatch
+):
+    """A mid-transaction audit failure must not leave partial financial records."""
+    job_id = financial_job["job_id"]
+    idempotency_key = "rollback-audit-failure"
+
+    def fail_jsonb(_value):
+        raise RuntimeError("simulated audit failure")
+
+    # This fails while preparing the audit event, after the collection and
+    # accrual inserts but before the transaction can commit.
+    monkeypatch.setattr(collections_service, "Jsonb", fail_jsonb)
+
+    with pytest.raises(RuntimeError, match="simulated audit failure"):
+        collections_service.record_collection(
+            public_job_id=job_id,
+            contractor_pk=financial_job["contractor_pk"],
+            account_id=financial_job["account_id"],
+            amount=Decimal("100.00"),
+            collected_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            idempotency_key=idempotency_key,
+        )
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM job_collections
+                WHERE idempotency_key = %s
+                """,
+                (idempotency_key,),
+            )
+            assert cursor.fetchone()["count"] == 0
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM job_fee_accruals a
+                JOIN job_collections c ON c.id = a.collection_id
+                WHERE c.idempotency_key = %s
+                """,
+                (idempotency_key,),
+            )
+            assert cursor.fetchone()["count"] == 0
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM job_financial_audit_events
+                WHERE job_id = (
+                    SELECT id FROM jobs WHERE job_id = %s
+                )
+                  AND event_type = 'PAYMENT_COLLECTION_REPORTED'
+                  AND details->>'idempotency_key' = %s
+                """,
+                (job_id, idempotency_key),
+            )
+            assert cursor.fetchone()["count"] == 0
