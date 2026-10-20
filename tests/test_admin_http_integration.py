@@ -1,3 +1,5 @@
+
+import http.cookiejar
 import json
 import os
 import urllib.error
@@ -26,11 +28,76 @@ def _contractor_pk(opportunity_id):
     return row["contractor_id"]
 
 
+def _request_json(opener, url, method="GET", payload=None, origin=None):
+    data = None
+    headers = {}
+
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    if origin:
+        headers["Origin"] = origin
+
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=headers,
+        method=method,
+    )
+
+    try:
+        with opener.open(request, timeout=15) as response:
+            body = response.read().decode("utf-8")
+            return response.status, json.loads(body) if body else {}
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        raise AssertionError(
+            f"{method} {url} returned HTTP {error.code}: {body}"
+        ) from error
+
+
 def test_http_admin_release_slot_creates_replacement():
     load_dotenv()
-    admin_token = os.getenv("EMG_ADMIN_TOKEN")
-    base_url = os.getenv("EMG_TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
-    assert admin_token, "EMG_ADMIN_TOKEN must be configured in .env"
+
+    username = os.getenv("EMG_ADMIN_USERNAME")
+    password = os.getenv("EMG_ADMIN_PASSWORD")
+    base_url = os.getenv(
+        "EMG_TEST_BASE_URL", "http://localhost:8000"
+    ).rstrip("/")
+    origin = os.getenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000").rstrip("/")
+
+    assert username, "Set EMG_ADMIN_USERNAME in the test environment."
+    assert password, "Set EMG_ADMIN_PASSWORD in the test environment."
+
+    # Retain the administrator's session cookie across HTTP requests.
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar)
+    )
+
+    # Authenticate against the real API.
+    login_status, login_body = _request_json(
+        opener,
+        f"{base_url}/admin-auth/login",
+        method="POST",
+        payload={"username": username, "password": password},
+        origin=origin,
+    )
+
+    assert login_status == 200, login_body
+    assert login_body.get("authenticated") is True, login_body
+    assert any(
+        cookie.name == "emg_admin_session" for cookie in cookie_jar
+    ), "Login succeeded but the administrator session cookie was not set."
+
+    # Confirm the cookie authenticates the session.
+    session_status, session_body = _request_json(
+        opener,
+        f"{base_url}/admin-auth/me",
+    )
+    assert session_status == 200, session_body
+    assert session_body.get("authenticated") is True, session_body
 
     suffix = uuid.uuid4().hex[:10]
     lead_id = None
@@ -72,59 +139,32 @@ def test_http_admin_release_slot_creates_replacement():
         )
         assert job_update["status"] == "BID_LOST"
 
-        payload = json.dumps(
-            {"reason": "HTTP integration test release"}
-        ).encode("utf-8")
-        request = urllib.request.Request(
+        # Release the accepted slot using the authenticated session cookie.
+        status_code, response_body = _request_json(
+            opener,
             (
                 f"{base_url}/admin/opportunities/"
                 f"{original_opportunity_id}/release-slot"
             ),
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-Admin-Token": admin_token,
-            },
             method="POST",
+            payload={"reason": "HTTP integration test release"},
+            origin=origin,
         )
 
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                status_code = response.status
-                response_body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            raise AssertionError(
-                f"HTTP endpoint returned {error.code}: {body}"
-            ) from error
+        assert status_code == 200, response_body
 
-        # Retry through the real HTTP endpoint. The replacement is already
-        # pending, so this must not create a duplicate invitation.
-        retry_payload = json.dumps(
-            {"reason": "HTTP integration test routing retry"}
-        ).encode("utf-8")
-        retry_request = urllib.request.Request(
+        # Retry routing through HTTP. The replacement is already pending,
+        # so this must not create a duplicate invitation.
+        retry_status_code, retry_body = _request_json(
+            opener,
             (
                 f"{base_url}/admin/opportunities/"
                 f"{original_opportunity_id}/retry-slot-routing"
             ),
-            data=retry_payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-Admin-Token": admin_token,
-            },
             method="POST",
+            payload={"reason": "HTTP integration test routing retry"},
+            origin=origin,
         )
-
-        try:
-            with urllib.request.urlopen(retry_request, timeout=15) as response:
-                retry_status_code = response.status
-                retry_body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            raise AssertionError(
-                f"Retry HTTP endpoint returned {error.code}: {body}"
-            ) from error
 
         assert retry_status_code == 200, retry_body
         assert retry_body["action"] == "RETRY_SLOT_ROUTING", retry_body
@@ -141,7 +181,7 @@ def test_http_admin_release_slot_creates_replacement():
                         WHERE opportunity_id = %s
                     )
                       AND event_type = 'AcceptedBidSlotRoutingRetried'
-                """,
+                    """,
                     (original_opportunity_id,),
                 )
                 assert cursor.fetchone()["count"] == 1

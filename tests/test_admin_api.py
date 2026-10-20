@@ -5,38 +5,56 @@ from fastapi.testclient import TestClient
 
 client = TestClient(api.app)
 
+ADMIN_COOKIE = {"emg_admin_session": "test-session"}
+
+
+def _enable_admin_session(monkeypatch):
+    """Mock session validation for admin endpoint unit tests."""
+
+    def fake_authenticate(token):
+        if token == "test-session":
+            return {
+                "admin_id": 1,
+                "username": "local-admin",
+            }
+        return None
+
+    monkeypatch.setattr(
+        api,
+        "authenticate_admin_session",
+        fake_authenticate,
+    )
+
 
 # -------------------------
 # Admin authentication
 # -------------------------
 
-def test_admin_controls_fail_closed_without_configuration(monkeypatch):
-    monkeypatch.delenv("EMG_ADMIN_TOKEN", raising=False)
-
+def test_admin_controls_reject_missing_session():
     response = client.post(
         "/admin/opportunities/EMGO-TEST/hold",
-        json={"reason": "Testing missing configuration"},
+        json={"reason": "Testing missing session"},
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 401
 
 
-def test_admin_controls_reject_missing_and_wrong_tokens(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_admin_controls_reject_missing_and_invalid_sessions(monkeypatch):
+    _enable_admin_session(monkeypatch)
 
     missing = client.post(
         "/admin/opportunities/EMGO-TEST/hold",
-        json={"reason": "Testing missing token"},
+        json={"reason": "Testing missing session"},
     )
 
-    wrong = client.post(
+    invalid = client.post(
         "/admin/opportunities/EMGO-TEST/hold",
-        headers={"X-Admin-Token": "incorrect-token"},
-        json={"reason": "Testing incorrect token"},
+        cookies={"emg_admin_session": "invalid-session"},
+        json={"reason": "Testing invalid session"},
     )
 
     assert missing.status_code == 401
-    assert wrong.status_code == 401
+    assert invalid.status_code == 401
 
 
 # -------------------------
@@ -44,7 +62,7 @@ def test_admin_controls_reject_missing_and_wrong_tokens(monkeypatch):
 # -------------------------
 
 def test_admin_hold_endpoint(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_hold(opportunity_id, *, reason, performed_by):
@@ -54,7 +72,7 @@ def test_admin_hold_endpoint(monkeypatch):
 
     response = client.post(
         "/admin/opportunities/EMGO-TEST/hold",
-        headers={"X-Admin-Token": "test-secret-token"},
+        cookies=ADMIN_COOKIE,
         json={"reason": "Contractor needs more time"},
     )
 
@@ -70,7 +88,7 @@ def test_admin_hold_endpoint(monkeypatch):
 
 
 def test_admin_extend_endpoint(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_extend(
@@ -92,7 +110,7 @@ def test_admin_extend_endpoint(monkeypatch):
 
     response = client.post(
         "/admin/opportunities/EMGO-TEST/extend",
-        headers={"X-Admin-Token": "test-secret-token"},
+        cookies=ADMIN_COOKIE,
         json={
             "days": 3,
             "reason": "Contractor requested an extension",
@@ -112,7 +130,7 @@ def test_admin_extend_endpoint(monkeypatch):
 
 
 def test_admin_release_hold_endpoint(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_release(opportunity_id, *, reason, performed_by):
@@ -126,7 +144,7 @@ def test_admin_release_hold_endpoint(monkeypatch):
 
     response = client.post(
         "/admin/opportunities/EMGO-TEST/release-hold",
-        headers={"X-Admin-Token": "test-secret-token"},
+        cookies=ADMIN_COOKIE,
         json={"reason": "Administrative review completed"},
     )
 
@@ -146,8 +164,7 @@ def test_admin_release_hold_endpoint(monkeypatch):
 # -------------------------
 
 def test_admin_release_accepted_slot_endpoint(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
-    monkeypatch.setenv("EMG_ADMIN_IDENTITY", "local-admin")
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_release(opportunity_id, *, reason, performed_by):
@@ -157,14 +174,21 @@ def test_admin_release_accepted_slot_endpoint(monkeypatch):
             "action": "SLOT_RELEASED",
             "slot_released": True,
             "replacement_count": 2,
-            "replacement_opportunities": ["EMGO-REPLACEMENT-1", "EMGO-REPLACEMENT-2"],
+            "replacement_opportunities": [
+                "EMGO-REPLACEMENT-1",
+                "EMGO-REPLACEMENT-2",
+            ],
         }
 
-    monkeypatch.setattr(api, "release_accepted_bid_slot", fake_release)
+    monkeypatch.setattr(
+        api,
+        "release_accepted_bid_slot",
+        fake_release,
+    )
 
     response = client.post(
         "/admin/opportunities/EMGO-TEST/release-slot",
-        headers={"X-Admin-Token": "test-secret-token"},
+        cookies=ADMIN_COOKIE,
         json={"reason": "Accepted by mistake"},
     )
 
@@ -177,42 +201,54 @@ def test_admin_release_accepted_slot_endpoint(monkeypatch):
     ]
 
 
-def test_admin_release_accepted_slot_rejects_missing_and_wrong_tokens(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_admin_release_accepted_slot_rejects_missing_and_invalid_sessions(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_release(*args, **kwargs):
         calls.append((args, kwargs))
         raise AssertionError("Release service must not be called.")
 
-    monkeypatch.setattr(api, "release_accepted_bid_slot", fake_release)
+    monkeypatch.setattr(
+        api,
+        "release_accepted_bid_slot",
+        fake_release,
+    )
 
     missing = client.post(
         "/admin/opportunities/EMGO-TEST/release-slot",
         json={"reason": "Accepted by mistake"},
     )
-    wrong = client.post(
+    invalid = client.post(
         "/admin/opportunities/EMGO-TEST/release-slot",
-        headers={"X-Admin-Token": "wrong-token"},
+        cookies={"emg_admin_session": "invalid-session"},
         json={"reason": "Accepted by mistake"},
     )
 
     assert missing.status_code == 401
-    assert wrong.status_code == 401
+    assert invalid.status_code == 401
     assert calls == []
 
 
-def test_admin_release_accepted_slot_maps_service_conflict_to_409(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_admin_release_accepted_slot_maps_service_conflict_to_409(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
 
     def fake_release(opportunity_id, *, reason, performed_by):
         raise ValueError("The accepted bid slot has already been released.")
 
-    monkeypatch.setattr(api, "release_accepted_bid_slot", fake_release)
+    monkeypatch.setattr(
+        api,
+        "release_accepted_bid_slot",
+        fake_release,
+    )
 
     response = client.post(
         "/admin/opportunities/EMGO-TEST/release-slot",
-        headers={"X-Admin-Token": "test-secret-token"},
+        cookies=ADMIN_COOKIE,
         json={"reason": "Accepted by mistake"},
     )
 
@@ -224,8 +260,8 @@ def test_admin_release_accepted_slot_maps_service_conflict_to_409(monkeypatch):
 # Contractor account provisioning security
 # -------------------------
 
-def test_account_provisioning_rejects_missing_admin_token(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_account_provisioning_rejects_missing_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_provision(**kwargs):
@@ -251,8 +287,8 @@ def test_account_provisioning_rejects_missing_admin_token(monkeypatch):
     assert calls == []
 
 
-def test_account_provisioning_rejects_wrong_admin_token(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_account_provisioning_rejects_invalid_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_provision(**kwargs):
@@ -267,7 +303,7 @@ def test_account_provisioning_rejects_wrong_admin_token(monkeypatch):
 
     response = client.post(
         "/admin/contractor-accounts",
-        headers={"X-Admin-Token": "wrong-token"},
+        cookies={"emg_admin_session": "invalid-session"},
         json={
             "contractor_id": "EMGC-TEST",
             "email": "contractor@example.com",
@@ -283,8 +319,8 @@ def test_account_provisioning_rejects_wrong_admin_token(monkeypatch):
 # Lead routing security
 # -------------------------
 
-def test_lead_routing_rejects_missing_admin_token(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_lead_routing_rejects_missing_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_route(lead_id):
@@ -303,8 +339,8 @@ def test_lead_routing_rejects_missing_admin_token(monkeypatch):
     assert calls == []
 
 
-def test_lead_routing_rejects_wrong_admin_token(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_lead_routing_rejects_invalid_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_route(lead_id):
@@ -319,7 +355,7 @@ def test_lead_routing_rejects_wrong_admin_token(monkeypatch):
 
     response = client.post(
         "/leads/EMGL-TEST/route",
-        headers={"X-Admin-Token": "wrong-token"},
+        cookies={"emg_admin_session": "invalid-session"},
     )
 
     assert response.status_code == 401
@@ -331,8 +367,7 @@ def test_lead_routing_rejects_wrong_admin_token(monkeypatch):
 # -------------------------
 
 def test_admin_retry_slot_routing_endpoint(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
-    monkeypatch.setenv("EMG_ADMIN_IDENTITY", "local-admin")
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_retry(opportunity_id, *, reason, performed_by):
@@ -344,11 +379,15 @@ def test_admin_retry_slot_routing_endpoint(monkeypatch):
             "replacement_opportunities": ["EMGO-REPLACEMENT-1"],
         }
 
-    monkeypatch.setattr(api, "retry_replacement_routing", fake_retry)
+    monkeypatch.setattr(
+        api,
+        "retry_replacement_routing",
+        fake_retry,
+    )
 
     response = client.post(
         "/admin/opportunities/EMGO-TEST/retry-slot-routing",
-        headers={"X-Admin-Token": "test-secret-token"},
+        cookies=ADMIN_COOKIE,
         json={"reason": "Retry after routing failure"},
     )
 
@@ -361,52 +400,61 @@ def test_admin_retry_slot_routing_endpoint(monkeypatch):
     ]
 
 
-def test_admin_retry_slot_routing_rejects_missing_and_wrong_tokens(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+def test_admin_retry_slot_routing_rejects_missing_and_invalid_sessions(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
     calls = []
 
     def fake_retry(*args, **kwargs):
         calls.append((args, kwargs))
         raise AssertionError("Retry service must not be called.")
 
-    monkeypatch.setattr(api, "retry_replacement_routing", fake_retry)
+    monkeypatch.setattr(
+        api,
+        "retry_replacement_routing",
+        fake_retry,
+    )
 
     missing = client.post(
         "/admin/opportunities/EMGO-TEST/retry-slot-routing",
         json={"reason": "Retry after routing failure"},
     )
-    wrong = client.post(
+    invalid = client.post(
         "/admin/opportunities/EMGO-TEST/retry-slot-routing",
-        headers={"X-Admin-Token": "wrong-token"},
+        cookies={"emg_admin_session": "invalid-session"},
         json={"reason": "Retry after routing failure"},
     )
 
     assert missing.status_code == 401
-    assert wrong.status_code == 401
+    assert invalid.status_code == 401
     assert calls == []
 
 
 def test_admin_retry_slot_routing_maps_service_errors(monkeypatch):
-    monkeypatch.setenv("EMG_ADMIN_TOKEN", "test-secret-token")
+    _enable_admin_session(monkeypatch)
 
     def fake_retry(opportunity_id, *, reason, performed_by):
         if opportunity_id == "EMGO-MISSING":
             raise LookupError("Opportunity not found.")
         raise ValueError("Slot has not been released.")
 
-    monkeypatch.setattr(api, "retry_replacement_routing", fake_retry)
+    monkeypatch.setattr(
+        api,
+        "retry_replacement_routing",
+        fake_retry,
+    )
 
-    headers = {"X-Admin-Token": "test-secret-token"}
     body = {"reason": "Retry after routing failure"}
 
     missing = client.post(
         "/admin/opportunities/EMGO-MISSING/retry-slot-routing",
-        headers=headers,
+        cookies=ADMIN_COOKIE,
         json=body,
     )
     conflict = client.post(
         "/admin/opportunities/EMGO-TEST/retry-slot-routing",
-        headers=headers,
+        cookies=ADMIN_COOKIE,
         json=body,
     )
 

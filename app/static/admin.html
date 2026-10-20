@@ -1,0 +1,655 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>EMG | Admin Dashboard</title>
+  <link rel="stylesheet" href="/static/emg.css">
+  <style>
+    :root {
+      --admin-bg: #101112;
+      --admin-panel: #191a1c;
+      --admin-panel-2: #202225;
+      --admin-border: #34363a;
+      --admin-text: #f2f1ed;
+      --admin-muted: #a4a5a8;
+      --admin-gold: #d6b56d;
+      --admin-green: #86c7a0;
+      --admin-red: #f08a83;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--admin-bg); color: var(--admin-text);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .app { min-height: 100vh; }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 18px;
+      padding: 20px clamp(18px, 4vw, 54px); border-bottom: 1px solid var(--admin-border);
+      background: #151618;
+    }
+    .brand { display: flex; align-items: center; gap: 13px; }
+    .brand-mark {
+      display: grid; place-items: center; width: 42px; height: 42px;
+      border: 1px solid var(--admin-gold); border-radius: 12px;
+      color: var(--admin-gold); font-weight: 800; letter-spacing: -1px;
+    }
+    .brand-name { font-weight: 750; letter-spacing: .08em; }
+    .brand-sub { color: var(--admin-muted); font-size: 12px; }
+    .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .shell { max-width: 1500px; margin: 0 auto; padding: 30px clamp(16px, 4vw, 54px) 60px; }
+    .heading-row { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 24px; }
+    h1 { margin: 0 0 7px; font-size: clamp(26px, 3vw, 36px); letter-spacing: -.04em; }
+    h2 { margin: 0; font-size: 19px; letter-spacing: -.02em; }
+    h3 { margin: 0 0 14px; font-size: 16px; }
+    p { margin: 0; }
+    .muted { color: var(--admin-muted); }
+    .eyebrow { color: var(--admin-gold); text-transform: uppercase; letter-spacing: .14em; font-size: 11px; font-weight: 750; margin-bottom: 8px; }
+    .btn {
+      display: inline-flex; justify-content: center; align-items: center; gap: 8px;
+      border-radius: 9px; padding: 10px 15px; border: 1px solid var(--admin-border);
+      color: var(--admin-text); background: var(--admin-panel-2); font-weight: 650;
+    }
+    .btn:hover { border-color: var(--admin-gold); }
+    .btn-primary { background: var(--admin-gold); color: #191713; border-color: var(--admin-gold); }
+    .btn-primary:hover { background: #e6c982; }
+    .btn-small { padding: 7px 10px; font-size: 13px; }
+    .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .field label { color: var(--admin-muted); font-size: 12px; font-weight: 650; }
+    input, select, textarea {
+      width: 100%; min-width: 0; padding: 11px 12px; color: var(--admin-text);
+      background: #111214; border: 1px solid var(--admin-border); border-radius: 9px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--admin-gold); box-shadow: 0 0 0 2px #d6b56d20; }
+    textarea { resize: vertical; min-height: 92px; }
+    .token-panel {
+      background: var(--admin-panel); border: 1px solid var(--admin-border);
+      border-radius: 14px; padding: 18px; margin-bottom: 25px;
+    }
+    .token-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: end; }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; margin: 0 0 16px; }
+    .metric {
+      padding: 20px; border: 1px solid var(--admin-border); border-radius: 14px;
+      background: linear-gradient(145deg, var(--admin-panel), #17181a);
+    }
+    .metric-label { color: var(--admin-muted); font-size: 13px; }
+    .metric-value { margin-top: 10px; font-size: clamp(25px, 3vw, 34px); font-weight: 750; letter-spacing: -.04em; }
+    .metric-note { margin-top: 7px; font-size: 12px; color: var(--admin-muted); }
+    .section-nav { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 0 18px; }
+    .nav-btn { padding: 9px 13px; background: transparent; border: 1px solid transparent; border-radius: 9px; color: var(--admin-muted); }
+    .nav-btn.active { background: #d6b56d14; border-color: #d6b56d65; color: var(--admin-gold); }
+    .panel { background: var(--admin-panel); border: 1px solid var(--admin-border); border-radius: 14px; padding: 21px; margin-bottom: 18px; }
+    .panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 17px; }
+    .panel-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .full { grid-column: 1 / -1; }
+    .table-wrap { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th { text-align: left; color: var(--admin-muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+    th, td { padding: 13px 12px; border-bottom: 1px solid var(--admin-border); vertical-align: top; }
+    td { font-size: 13px; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .primary-cell { font-weight: 700; }
+    .sub-cell { color: var(--admin-muted); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+    .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--admin-border); color: var(--admin-muted); font-size: 11px; white-space: nowrap; }
+    .pill.gold { color: var(--admin-gold); border-color: #d6b56d65; background: #d6b56d10; }
+    .pill.green { color: var(--admin-green); border-color: #86c7a055; }
+    .pill.red { color: var(--admin-red); border-color: #f08a8355; }
+    .notice { padding: 12px 14px; border-radius: 9px; margin: 0 0 15px; font-size: 13px; overflow-wrap: anywhere; }
+    .notice.info { color: var(--admin-muted); background: #ffffff06; border: 1px solid var(--admin-border); }
+    .notice.success { color: var(--admin-green); background: #86c7a00d; border: 1px solid #86c7a055; }
+    .notice.error { color: var(--admin-red); background: #f08a830d; border: 1px solid #f08a8355; }
+    .hidden { display: none !important; }
+    .empty { text-align: center; padding: 28px; color: var(--admin-muted); }
+    .status-line { min-height: 20px; margin-top: 10px; font-size: 12px; color: var(--admin-muted); }
+    .footer { text-align: center; padding-top: 15px; color: var(--admin-muted); font-size: 12px; }
+    @media (max-width: 850px) {
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .panel-grid { grid-template-columns: 1fr; }
+      .token-grid { grid-template-columns: 1fr; }
+      .heading-row { align-items: start; flex-direction: column; }
+    }
+    @media (max-width: 520px) {
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .metric-grid { gap: 9px; }
+      .metric { padding: 14px; }
+      .metric-value { font-size: 26px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .full { grid-column: auto; }
+      .panel { padding: 15px; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">EM</div>
+      <div>
+        <div class="brand-name">ELITEMATCH GROUP</div>
+        <div class="brand-sub">Operations console</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="connectionPill" class="pill">Not connected</span>
+      <button class="btn btn-small" id="refreshTop" type="button">Refresh data</button>
+      <button class="btn btn-small" id="disconnectBtn" type="button">Disconnect</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="heading-row">
+      <div>
+        <div class="eyebrow">Management workspace</div>
+        <h1>Admin dashboard</h1>
+        <p class="muted">Monitor leads, manage contractor partners, and provision portal access.</p>
+      </div>
+      <div class="muted" id="lastUpdated">Awaiting connection</div>
+    </div>
+
+
+    <section class="token-panel" aria-labelledby="accessHeading">
+      <div class="panel-heading">
+        <div>
+          <h2 id="accessHeading">Admin access</h2>
+          <p class="muted" style="font-size:13px;margin-top:4px">
+            Sign in with your administrator username and password.
+          </p>
+        </div>
+        <span class="pill">Secure session</span>
+      </div>
+
+      <form id="loginForm">
+        <div class="token-grid">
+          <div class="field">
+            <label for="adminUsername">Username</label>
+            <input
+              id="adminUsername"
+              name="username"
+              type="text"
+              autocomplete="username"
+              required
+              minlength="3"
+              maxlength="64"
+              placeholder="Administrator username"
+            >
+          </div>
+
+          <div class="field">
+            <label for="adminPassword">Password</label>
+            <input
+              id="adminPassword"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              placeholder="Administrator password"
+            >
+          </div>
+
+          <button class="btn btn-primary" type="submit">Sign in</button>
+          <button class="btn" id="logoutBtn" type="button">Sign out</button>
+        </div>
+      </form>
+
+      <div id="accessMessage" class="status-line" role="status">
+        Protected information remains unavailable until authenticated.
+      </div>
+    </section>
+
+
+    <div id="globalMessage" class="notice hidden" role="status"></div>
+
+    <section aria-label="Dashboard metrics">
+      <div class="metric-grid">
+        <article class="metric">
+          <div class="metric-label">Total homeowner leads</div>
+          <div class="metric-value" id="metricLeads">—</div>
+          <div class="metric-note">All recorded leads</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">Contractor partners</div>
+          <div class="metric-value" id="metricContractors">—</div>
+          <div class="metric-note">All registered profiles</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">Pending opportunities</div>
+          <div class="metric-value" id="metricOpportunities">—</div>
+          <div class="metric-note">Awaiting contractor response</div>
+        </article>
+        <article class="metric">
+          <div class="metric-label">Jobs created</div>
+          <div class="metric-value" id="metricJobs">—</div>
+          <div class="metric-note">Recorded job records</div>
+        </article>
+      </div>
+      <article class="metric" style="margin-bottom:22px">
+        <div class="metric-label">Accrued referral fees</div>
+        <div class="metric-value" id="metricFees">—</div>
+        <div class="metric-note">Accrued fees are not confirmation that EMG has received payment.</div>
+      </article>
+    </section>
+
+    <nav class="section-nav" aria-label="Admin sections">
+      <button class="nav-btn active" data-section="leadsSection" type="button">Homeowner leads</button>
+      <button class="nav-btn" data-section="contractorsSection" type="button">Contractors</button>
+      <button class="nav-btn" data-section="accountsSection" type="button">Portal accounts</button>
+    </nav>
+
+    <section id="leadsSection" class="section-view">
+      <article class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Homeowner leads</h2>
+            <p class="muted" style="font-size:13px;margin-top:4px">Recent submissions and homeowner contact details.</p>
+          </div>
+          <button class="btn btn-small" id="refreshLeads" type="button">Reload leads</button>
+        </div>
+        <div class="field" style="max-width:360px;margin-bottom:15px">
+          <label for="leadSearch">Search leads</label>
+          <input id="leadSearch" type="search" placeholder="Lead ID, ZIP, service, name, email">
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Lead</th><th>Service / description</th><th>Homeowner</th><th>Budget</th><th>Bids</th><th>Status</th><th>Submitted</th></tr>
+            </thead>
+            <tbody id="leadsBody"><tr><td colspan="7" class="empty">Connect with your admin token to load leads.</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section id="contractorsSection" class="section-view hidden">
+      <div class="panel-grid">
+        <article class="panel">
+          <div class="panel-heading"><div><h2>Register contractor</h2><p class="muted" style="font-size:13px;margin-top:4px">Create a partner profile.</p></div></div>
+          <div class="notice info">Creating a profile does not automatically create a portal login. Use the Portal Accounts section after registration.</div>
+          <form id="contractorForm">
+            <div class="form-grid">
+              <div class="field full"><label for="companyName">Company name *</label><input id="companyName" required minlength="2" maxlength="200"></div>
+              <div class="field"><label for="contactName">Contact name</label><input id="contactName" maxlength="150"></div>
+              <div class="field"><label for="contractorEmail">Business email *</label><input id="contractorEmail" type="email" required maxlength="255"></div>
+              <div class="field"><label for="contractorPhone">Phone</label><input id="contractorPhone" type="tel" maxlength="30"></div>
+              <div class="field full"><label for="serviceArea">Service ZIP codes / areas *</label><input id="serviceArea" required placeholder="83814, 83815, Spokane"></div>
+              <div class="field full"><label for="specialties">Specialties *</label><input id="specialties" required placeholder="Roofing, siding, gutters"></div>
+              <div class="full"><button class="btn btn-primary" type="submit">Create contractor profile</button></div>
+            </div>
+            <div id="contractorFormMessage" class="status-line" role="status"></div>
+          </form>
+        </article>
+        <article class="panel">
+          <div class="panel-heading"><div><h2>Contractor directory</h2><p class="muted" style="font-size:13px;margin-top:4px">Profile status and portal access.</p></div><button class="btn btn-small" id="refreshContractors" type="button">Reload</button></div>
+          <div class="field" style="margin-bottom:14px"><label for="contractorSearch">Search contractors</label><input id="contractorSearch" type="search" placeholder="Company, email, service area"></div>
+          <div class="table-wrap">
+            <table style="min-width:560px">
+              <thead><tr><th>Company</th><th>Service area / specialties</th><th>Status</th><th>Portal login</th></tr></thead>
+              <tbody id="contractorsBody"><tr><td colspan="4" class="empty">Connect to load contractors.</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="accountsSection" class="section-view hidden">
+      <div class="panel-grid">
+        <article class="panel">
+          <div class="panel-heading"><div><h2>Create portal login</h2><p class="muted" style="font-size:13px;margin-top:4px">Provision access for an existing contractor.</p></div></div>
+          <div class="notice info">Select a contractor from the directory. The account email should match the email you want them to use to sign in. Passwords must be at least 12 characters.</div>
+          <form id="accountForm">
+            <div class="form-grid">
+              <div class="field full"><label for="accountContractor">Contractor *</label><select id="accountContractor" required><option value="">Load contractors first</option></select></div>
+              <div class="field full"><label for="accountEmail">Login email *</label><input id="accountEmail" type="email" required maxlength="255" autocomplete="off"></div>
+              <div class="field full"><label for="accountPassword">Temporary password *</label><input id="accountPassword" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"><span class="muted" style="font-size:12px">Provide the password to the contractor through a secure channel. It is not displayed again after submission.</span></div>
+              <div class="full"><button class="btn btn-primary" type="submit">Create portal account</button></div>
+            </div>
+            <div id="accountFormMessage" class="status-line" role="status"></div>
+          </form>
+        </article>
+        <article class="panel">
+          <h2 style="margin-bottom:12px">Account provisioning checklist</h2>
+          <p class="muted" style="margin-bottom:14px">Before you send login details:</p>
+          <ul class="muted" style="padding-left:20px;line-height:1.9">
+            <li>Confirm the contractor profile is correct.</li>
+            <li>Use a unique, strong temporary password.</li>
+            <li>Send credentials privately, not by public message.</li>
+            <li>Confirm the contractor can sign in successfully.</li>
+          </ul>
+          <div class="notice info" style="margin-top:18px">This screen does not store login passwords in browser storage. Once submitted, the password field is cleared.</div>
+        </article>
+      </div>
+    </section>
+
+    <div class="footer">EliteMatch Group · Internal operations interface</div>
+  </main>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  let leads = [];
+  let contractors = [];
+  let overview = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[char]);
+  }
+
+  function showMessage(id, message, type = "") {
+    const el = $(id);
+    el.textContent = message;
+    el.className = type ? `notice ${type}` : "status-line";
+    if (id === "globalMessage") el.classList.remove("hidden");
+  }
+
+  function globalMessage(message, type = "info") {
+    showMessage("globalMessage", message, type);
+  }
+
+  function setConnected(connected, message = "") {
+    $("connectionPill").textContent = connected ? "Connected" : "Not connected";
+    $("connectionPill").className = connected ? "pill green" : "pill";
+    $("accessMessage").textContent = message || (
+      connected ? "Authenticated for this page session." : "Protected information remains unavailable until authenticated."
+    );
+  }
+
+  function money(value) {
+    const number = Number(value ?? 0);
+    return Number.isFinite(number) ? number.toLocaleString("en-US", {
+      style: "currency", currency: "USD"
+    }) : "—";
+  }
+
+  function dateLabel(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  }
+
+
+  async function api(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+
+    if (options.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    let response;
+    try {
+      response = await fetch(path, {
+        ...options,
+        headers,
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+    } catch {
+      throw new Error("Could not reach the API. Check that the EMG server is running.");
+    }
+
+    const text = await response.text();
+    let data = null;
+
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+    }
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearDashboardData();
+        setConnected(false, "Your administrator session is missing or expired. Please sign in again.");
+      }
+
+      const detail = data && typeof data === "object" ? data.detail : null;
+      throw new Error(detail || `Request failed (${response.status}).`);
+    }
+
+    return data;
+  }
+
+
+  async function loadOverview() {
+    overview = await api("/admin/overview");
+    $("metricLeads").textContent = overview.total_leads ?? "—";
+    $("metricContractors").textContent = overview.total_contractors ?? "—";
+    $("metricOpportunities").textContent = overview.pending_opportunities ?? "—";
+    $("metricJobs").textContent = overview.total_jobs ?? "—";
+    $("metricFees").textContent = money(overview.accrued_referral_fees);
+  }
+
+  async function loadLeads() {
+    leads = await api("/admin/leads");
+    renderLeads();
+  }
+
+  function renderLeads() {
+    const query = $("leadSearch").value.trim().toLowerCase();
+    const rows = leads.filter((lead) => [
+      lead.lead_id, lead.zip_code, lead.service_type, lead.description,
+      lead.customer_name, lead.customer_email, lead.status
+    ].some((value) => String(value ?? "").toLowerCase().includes(query)));
+
+    $("leadsBody").innerHTML = rows.length ? rows.map((lead) => `
+      <tr>
+        <td><div class="primary-cell">${escapeHtml(lead.lead_id)}</div><div class="sub-cell">${escapeHtml(lead.zip_code)}</div></td>
+        <td><div class="primary-cell">${escapeHtml(lead.service_type)}</div><div class="sub-cell">${escapeHtml(lead.description)}</div></td>
+        <td><div class="primary-cell">${escapeHtml(lead.customer_name || "Not provided")}</div><div class="sub-cell">${escapeHtml(lead.customer_email || "")}</div><div class="sub-cell">${escapeHtml(lead.customer_phone || "")}</div></td>
+        <td>${lead.budget == null ? "Not specified" : escapeHtml(money(lead.budget))}</td>
+        <td>${escapeHtml(lead.requested_bid_count ?? "—")}</td>
+        <td><span class="pill gold">${escapeHtml(lead.status || "UNKNOWN")}</span></td>
+        <td>${escapeHtml(dateLabel(lead.created_at))}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="7" class="empty">No matching leads found.</td></tr>';
+  }
+
+  async function loadContractors() {
+    contractors = await api("/admin/contractors");
+    renderContractors();
+    renderContractorOptions();
+  }
+
+  function renderContractors() {
+    const query = $("contractorSearch").value.trim().toLowerCase();
+    const rows = contractors.filter((contractor) => [
+      contractor.contractor_id, contractor.company_name, contractor.contact_name,
+      contractor.email, contractor.phone, ...(contractor.service_area || []),
+      ...(contractor.specialties || [])
+    ].some((value) => String(value ?? "").toLowerCase().includes(query)));
+
+    $("contractorsBody").innerHTML = rows.length ? rows.map((contractor) => `
+      <tr>
+        <td><div class="primary-cell">${escapeHtml(contractor.company_name)}</div><div class="sub-cell">${escapeHtml(contractor.contractor_id)}</div><div class="sub-cell">${escapeHtml(contractor.email)}</div></td>
+        <td><div>${escapeHtml((contractor.service_area || []).join(", "))}</div><div class="sub-cell">${escapeHtml((contractor.specialties || []).join(", "))}</div></td>
+        <td><span class="pill ${contractor.status === "ACTIVE" ? "green" : "red"}">${escapeHtml(contractor.status || "UNKNOWN")}</span><div class="sub-cell">${escapeHtml(contractor.availability || "")}</div></td>
+        <td><span class="pill ${contractor.has_login ? "green" : ""}">${contractor.has_login ? "Provisioned" : "No login"}</span></td>
+      </tr>
+    `).join("") : '<tr><td colspan="4" class="empty">No matching contractors found.</td></tr>';
+  }
+
+  function renderContractorOptions() {
+    const select = $("accountContractor");
+    const previous = select.value;
+    select.innerHTML = '<option value="">Choose a contractor</option>' + contractors.map((contractor) =>
+      `<option value="${escapeHtml(contractor.contractor_id)}" data-email="${escapeHtml(contractor.email || "")}">${escapeHtml(contractor.company_name)} · ${escapeHtml(contractor.contractor_id)}${contractor.has_login ? " · Login exists" : ""}</option>`
+    ).join("");
+    if (contractors.some((c) => c.contractor_id === previous)) select.value = previous;
+  }
+
+  async function refreshAll() {
+    $("refreshTop").disabled = true;
+
+    try {
+      await Promise.all([loadOverview(), loadLeads(), loadContractors()]);
+      setConnected(true, "Authenticated with a secure administrator session.");
+      $("lastUpdated").textContent = "Updated " + new Date().toLocaleTimeString();
+      $("globalMessage").classList.add("hidden");
+    } catch (error) {
+      globalMessage(error.message, "error");
+    } finally {
+      $("refreshTop").disabled = false;
+    }
+  }
+
+  function clearDashboardData() {
+    leads = [];
+    contractors = [];
+    overview = null;
+
+    ["metricLeads", "metricContractors", "metricOpportunities", "metricJobs", "metricFees"]
+      .forEach((id) => $(id).textContent = "—");
+
+    $("leadsBody").innerHTML =
+      '<tr><td colspan="7" class="empty">Sign in to load leads.</td></tr>';
+
+    $("contractorsBody").innerHTML =
+      '<tr><td colspan="4" class="empty">Sign in to load contractors.</td></tr>';
+
+    renderContractorOptions();
+  }
+
+
+  $("loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const username = $("adminUsername").value.trim();
+    const password = $("adminPassword").value;
+    const submitButton = $("loginForm").querySelector('button[type="submit"]');
+
+    submitButton.disabled = true;
+
+    try {
+      await api("/admin-auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password })
+      });
+
+      $("adminPassword").value = "";
+      await refreshAll();
+    } catch (error) {
+      setConnected(false, "Administrator sign-in failed.");
+      globalMessage(error.message, "error");
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  async function logoutAdmin() {
+    try {
+      await api("/admin-auth/logout", { method: "POST" });
+    } catch (error) {
+      globalMessage(error.message, "error");
+    } finally {
+      $("adminPassword").value = "";
+      clearDashboardData();
+      setConnected(false, "Signed out. Protected information is unavailable.");
+      $("globalMessage").classList.add("hidden");
+    }
+  }
+
+  $("logoutBtn").addEventListener("click", logoutAdmin);
+  $("disconnectBtn").addEventListener("click", logoutAdmin);
+  $("refreshTop").addEventListener("click", refreshAll);
+
+  $("refreshLeads").addEventListener("click", async () => {
+    try { await loadLeads(); showMessage("globalMessage", "Leads refreshed.", "success"); }
+    catch (error) { globalMessage(error.message, "error"); }
+  });
+  $("refreshContractors").addEventListener("click", async () => {
+    try { await loadContractors(); globalMessage("Contractors refreshed.", "success"); }
+    catch (error) { globalMessage(error.message, "error"); }
+  });
+
+  $("leadSearch").addEventListener("input", renderLeads);
+  $("contractorSearch").addEventListener("input", renderContractors);
+
+  document.querySelectorAll(".nav-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".nav-btn").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelectorAll(".section-view").forEach((section) => section.classList.toggle("hidden", section.id !== button.dataset.section));
+    });
+  });
+
+  $("contractorForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = $("contractorFormMessage");
+    message.textContent = "Creating contractor profile…";
+    try {
+      const splitList = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+      const payload = {
+        company_name: $("companyName").value.trim(),
+        contact_name: $("contactName").value.trim() || null,
+        email: $("contractorEmail").value.trim(),
+        phone: $("contractorPhone").value.trim() || null,
+        service_area: splitList($("serviceArea").value),
+        specialties: splitList($("specialties").value)
+      };
+      if (!payload.service_area.length || !payload.specialties.length) {
+        throw new Error("Enter at least one service area and one specialty, separated by commas.");
+      }
+      const created = await api("/admin/contractors", { method: "POST", body: JSON.stringify(payload) });
+      message.textContent = `Created ${created.company_name} (${created.contractor_id}).`;
+      message.style.color = "var(--admin-green)";
+      $("contractorForm").reset();
+      await Promise.all([loadOverview(), loadContractors()]);
+      $("accountContractor").value = created.contractor_id;
+      $("accountEmail").value = created.email || payload.email;
+    } catch (error) {
+      message.textContent = error.message;
+      message.style.color = "var(--admin-red)";
+    }
+  });
+
+  $("accountContractor").addEventListener("change", () => {
+    const option = $("accountContractor").selectedOptions[0];
+    if (option && option.dataset.email) $("accountEmail").value = option.dataset.email;
+  });
+
+  $("accountForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = $("accountFormMessage");
+    const passwordInput = $("accountPassword");
+    message.textContent = "Provisioning contractor account…";
+    try {
+      const payload = {
+        contractor_id: $("accountContractor").value,
+        email: $("accountEmail").value.trim(),
+        password: passwordInput.value
+      };
+      if (!payload.contractor_id) throw new Error("Choose a contractor first.");
+      if (payload.password.length < 12) throw new Error("Password must be at least 12 characters.");
+      await api("/admin/contractor-accounts", { method: "POST", body: JSON.stringify(payload) });
+      passwordInput.value = "";
+      message.textContent = "Contractor account created. Deliver the credentials privately.";
+      message.style.color = "var(--admin-green)";
+      await loadContractors();
+    } catch (error) {
+      message.textContent = error.message;
+      message.style.color = "var(--admin-red)";
+    }
+  });
+
+  setConnected(false);
+  api("/admin-auth/me")
+    .then(() => refreshAll())
+    .catch(() => {
+      clearDashboardData();
+      setConnected(false, "Sign in to access protected dashboard data.");
+    });
+})();
+</script>
+</body>
+</html>

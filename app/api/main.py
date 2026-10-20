@@ -1,3 +1,4 @@
+﻿from fastapi.staticfiles import StaticFiles
 import os
 import secrets
 import uuid
@@ -14,6 +15,11 @@ from app.database.auth import (
     login_contractor,
     logout_contractor,
     provision_contractor_account,
+)
+from app.database.admin_auth import (
+    authenticate_admin_session,
+    login_admin,
+    logout_admin,
 )
 from app.database.connection import get_connection
 from app.database.leads import create_lead, get_lead_by_lead_id
@@ -79,6 +85,11 @@ app = FastAPI(
     description="Homeowner lead intake and contractor referral backend.",
     version="0.2.0",
 )
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).resolve().parent.parent / "static"),
+    name="static",
+)
 app.include_router(financial_router)
 @app.get("/", include_in_schema=False)
 def contractor_portal():
@@ -88,6 +99,12 @@ def contractor_portal():
 @app.get("/homeowner", include_in_schema=False)
 def homeowner_portal():
     frontend_path = Path(__file__).resolve().parent.parent / "static" / "homeowner.html"
+    return FileResponse(frontend_path)
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_portal():
+    frontend_path = Path(__file__).resolve().parent.parent / "static" / "admin.html"
     return FileResponse(frontend_path)
 
 # -------------------------
@@ -187,9 +204,6 @@ class ContractorJobResponse(BaseModel):
     zip_code: str
     service_type: str
     description: str
-    customer_name: str
-    customer_email: str | None = None
-    customer_phone: str | None = None
     quoted_amount: float | None = None
     created_at: str
     updated_at: str
@@ -234,6 +248,9 @@ class ContractorLoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=1, max_length=1024)
 
+class AdminLoginRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=1, max_length=1024)
 
 class ContractorAccountCreate(BaseModel):
     contractor_id: str = Field(min_length=1, max_length=30)
@@ -245,27 +262,19 @@ class ContractorAccountCreate(BaseModel):
 # Admin authentication
 # -------------------------
 
-def require_admin(x_admin_token: str | None) -> str:
-    """Fail closed unless the configured admin token is valid."""
+def require_admin(request: Request) -> dict:
+    """Return the authenticated administrator or reject the request."""
 
-    configured_token = os.getenv("EMG_ADMIN_TOKEN")
+    token = request.cookies.get("emg_admin_session")
+    admin = authenticate_admin_session(token or "")
 
-    if not configured_token:
-        raise HTTPException(
-            status_code=503,
-            detail="Admin controls are disabled: EMG_ADMIN_TOKEN is not set.",
-        )
-
-    if (
-        not x_admin_token
-        or not secrets.compare_digest(x_admin_token, configured_token)
-    ):
+    if admin is None:
         raise HTTPException(
             status_code=401,
-            detail="A valid admin token is required.",
+            detail="A valid administrator session is required.",
         )
 
-    return os.getenv("EMG_ADMIN_IDENTITY", "configured-admin")
+    return admin
 
 
 # -------------------------
@@ -304,6 +313,71 @@ def contractor_cookie_secure() -> bool:
         os.getenv("EMG_COOKIE_SECURE", "false").strip().lower() == "true"
     )
 
+# -------------------------
+# Administrator authentication
+# -------------------------
+
+@app.post("/admin-auth/login")
+def admin_login(
+    request: Request,
+    login_input: AdminLoginRequest,
+    response: Response,
+):
+    require_allowed_origin(request)
+
+    try:
+        admin = login_admin(
+            username=login_input.username,
+            password=login_input.password,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password.",
+        )
+
+    response.set_cookie(
+        key="emg_admin_session",
+        value=admin["session_token"],
+        max_age=admin["expires_in"],
+        httponly=True,
+        secure=contractor_cookie_secure(),
+        samesite="lax",
+        path="/",
+    )
+
+    return {
+        "authenticated": True,
+        "username": admin["username"],
+        "expires_in": admin["expires_in"],
+    }
+
+
+@app.get("/admin-auth/me")
+def admin_session_status(request: Request):
+    admin = require_admin(request)
+    return {
+        "authenticated": True,
+        "username": admin["username"],
+    }
+
+
+@app.post("/admin-auth/logout")
+def admin_logout(request: Request, response: Response):
+    require_allowed_origin(request)
+
+    token = request.cookies.get("emg_admin_session")
+    logout_admin(token or "")
+
+    response.delete_cookie(
+        key="emg_admin_session",
+        path="/",
+        httponly=True,
+        secure=contractor_cookie_secure(),
+        samesite="lax",
+    )
+
+    return {"authenticated": False}
 
 # -------------------------
 # Contractor authentication
@@ -803,15 +877,117 @@ def contractor_photo(
         },
     )
 
+
+@app.get("/admin/overview")
+def admin_overview(request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM leads) AS total_leads,
+                    (SELECT COUNT(*) FROM contractors) AS total_contractors,
+                    (SELECT COUNT(*) FROM opportunities
+                     WHERE status = 'PENDING') AS pending_opportunities,
+                    (SELECT COUNT(*) FROM jobs) AS total_jobs
+            """)
+            counts = cur.fetchone()
+
+            cur.execute("""
+                SELECT COALESCE(SUM(a.fee_amount), 0) AS accrued_referral_fees
+                FROM job_fee_accruals a
+                JOIN job_collections c ON c.id = a.collection_id
+                WHERE a.accrual_status IN ('ACCRUED', 'INVOICED')
+                  AND c.report_status = 'ACTIVE'
+            """)
+            financials = cur.fetchone()
+
+    return {
+        **dict(counts),
+        "accrued_referral_fees": financials["accrued_referral_fees"],
+        "financial_note": (
+            "Accrued referral fees are not confirmation that EMG has received payment."
+        ),
+    }
+
+
+@app.get("/admin/leads")
+def admin_list_leads(request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT lead_id, zip_code, service_type, description, budget,
+                       urgency, requested_bid_count, status, customer_name,
+                       customer_email, customer_phone, created_at, updated_at
+                FROM leads
+                ORDER BY created_at DESC
+                LIMIT 200
+            """)
+            return [dict(row) for row in cur.fetchall()]
+
+
+@app.get("/admin/contractors")
+def admin_list_contractors(request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.contractor_id, c.company_name, c.contact_name,
+                       c.email, c.phone, c.service_area, c.specialties,
+                       c.availability, c.status, c.created_at,
+                       (a.id IS NOT NULL) AS has_login
+                FROM contractors c
+                LEFT JOIN contractor_accounts a
+                  ON a.contractor_id = c.id
+                ORDER BY c.created_at DESC
+                LIMIT 200
+            """)
+            rows = [dict(row) for row in cur.fetchall()]
+
+    for row in rows:
+        row["service_area"] = [
+            value.strip() for value in (row["service_area"] or "").split(",")
+            if value.strip()
+        ]
+        row["specialties"] = [
+            value.strip() for value in (row["specialties"] or "").split(",")
+            if value.strip()
+        ]
+
+    return rows
+
+
+@app.post("/admin/contractors", response_model=ContractorResponse, status_code=201)
+def admin_register_contractor(
+    contractor_input: ContractorCreate,
+    request: Request,
+):
+    require_admin(request)
+
+    try:
+        contractor = create_contractor(**contractor_input.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return {
+        "contractor_id": contractor["contractor_id"],
+        "company_name": contractor["company_name"],
+        "service_area": contractor["service_area"].split(","),
+        "specialties": contractor["specialties"].split(","),
+        "availability": contractor["availability"],
+    }
+
+
 @app.post("/admin/contractor-accounts", status_code=201)
 def admin_create_contractor_account(
     account_input: ContractorAccountCreate,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    request: Request,
 ):
-    require_admin(x_admin_token)
+    require_admin(request)
 
     try:
         account = provision_contractor_account(
@@ -1131,7 +1307,11 @@ def read_lead(lead_id: str):
     response_model=ContractorResponse,
     status_code=201,
 )
-def register_contractor(contractor_input: ContractorCreate):
+def register_contractor(
+    contractor_input: ContractorCreate,
+    request: Request,
+):
+    require_admin(request)
     try:
         contractor = create_contractor(**contractor_input.model_dump())
 
@@ -1176,13 +1356,10 @@ def read_available_contractors():
 )
 def route_lead(
     lead_id: str,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    request: Request,
 ):
     # Routing creates contractor invitations, so it is admin-protected.
-    require_admin(x_admin_token)
+    require_admin(request)
 
     try:
         opportunities = route_opportunities_to_fill_slots(lead_id)
@@ -1288,9 +1465,6 @@ def list_contractor_jobs(request: Request):
                     l.zip_code,
                     l.service_type,
                     l.description,
-                    l.customer_name,
-                    l.customer_email,
-                    l.customer_phone,
                     j.quoted_amount::float AS quoted_amount,
                     j.created_at::text AS created_at,
                     j.updated_at::text AS updated_at
@@ -1378,12 +1552,9 @@ def change_job_status(
 def admin_hold_opportunity(
     opportunity_id: str,
     request: AdminReasonRequest,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    http_request: Request,
 ):
-    admin_identity = require_admin(x_admin_token)
+    admin_identity = require_admin(http_request)["username"]
 
     try:
         hold_opportunity(
@@ -1418,12 +1589,9 @@ def admin_hold_opportunity(
 def admin_extend_opportunity(
     opportunity_id: str,
     request: AdminExtendRequest,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    http_request: Request,
 ):
-    admin_identity = require_admin(x_admin_token)
+    admin_identity = require_admin(http_request)["username"]
 
     try:
         extend_opportunity_deadline(
@@ -1459,12 +1627,9 @@ def admin_extend_opportunity(
 def admin_release_opportunity_hold(
     opportunity_id: str,
     request: AdminReasonRequest,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    http_request: Request,
 ):
-    admin_identity = require_admin(x_admin_token)
+    admin_identity = require_admin(http_request)["username"]
 
     try:
         release_opportunity_hold(
@@ -1498,12 +1663,9 @@ def admin_release_opportunity_hold(
 def admin_release_accepted_slot(
     opportunity_id: str,
     request: AdminReasonRequest,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    http_request: Request,
 ):
-    admin_identity = require_admin(x_admin_token)
+    admin_identity = require_admin(http_request)["username"]
 
     try:
         result = release_accepted_bid_slot(
@@ -1543,12 +1705,9 @@ def admin_release_accepted_slot(
 def admin_retry_slot_routing(
     opportunity_id: str,
     request: AdminReasonRequest,
-    x_admin_token: str | None = Header(
-        default=None,
-        alias="X-Admin-Token",
-    ),
+    http_request: Request,
 ):
-    admin_identity = require_admin(x_admin_token)
+    admin_identity = require_admin(http_request)["username"]
 
     try:
         result = retry_replacement_routing(

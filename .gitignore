@@ -15,3 +15,10 @@ data/
 
 # Generated API specification
 openapi.json
+
+# Local backups and environment-file backups
+.env.backup*
+*.bak
+*.backup*
+*.admin-backup
+*.static-backup
