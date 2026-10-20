@@ -526,16 +526,9 @@ async function openJobDetails(jobId) {
   if (!dialog.open) dialog.showModal();
 
   try {
-    const jobs = await request("/contractor/jobs");
-    const items = Array.isArray(jobs)
-      ? jobs
-      : (jobs?.items || jobs?.jobs || []);
-
-    const job = items.find(item => item.job_id === jobId);
-
-    if (!job) {
-      throw new Error("Job not found. Refresh My Jobs and try again.");
-    }
+    const job = await request(
+      `/contractor/jobs/${encodeURIComponent(jobId)}`
+    );
 
     content.replaceChildren();
     content.append(createHomeownerContact(job));

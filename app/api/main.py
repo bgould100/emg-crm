@@ -151,7 +151,6 @@ class ContractorResponse(BaseModel):
     specialties: list[str]
     availability: str
 
-
 class OpportunityResponse(BaseModel):
     opportunity_id: str
     lead_id: str
@@ -159,7 +158,6 @@ class OpportunityResponse(BaseModel):
     company_name: str
     match_score: int
     status: str
-
 
 class ContractorInboxOpportunity(BaseModel):
     opportunity_id: str
@@ -198,6 +196,7 @@ class JobStatusResponse(BaseModel):
     alert_queued: bool = False
 
 
+
 class ContractorJobResponse(BaseModel):
     job_id: str
     status: str
@@ -207,6 +206,12 @@ class ContractorJobResponse(BaseModel):
     quoted_amount: float | None = None
     created_at: str
     updated_at: str
+
+
+class ContractorJobDetailResponse(ContractorJobResponse):
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    customer_email: str | None = None
 
 
 class OpportunityDecisionResponse(BaseModel):
@@ -1485,6 +1490,56 @@ def list_contractor_jobs(request: Request):
             rows = cursor.fetchall()
 
     return rows
+
+@app.get(
+    "/contractor/jobs/{job_id}",
+    response_model=ContractorJobDetailResponse,
+)
+def contractor_job_detail(
+    job_id: str,
+    request: Request,
+):
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    j.job_id,
+                    j.status,
+                    l.zip_code,
+                    l.service_type,
+                    l.description,
+                    l.customer_name,
+                    l.customer_phone,
+                    l.customer_email,
+                    j.quoted_amount::float AS quoted_amount,
+                    j.created_at::text AS created_at,
+                    j.updated_at::text AS updated_at
+                FROM jobs AS j
+                JOIN leads AS l ON l.id = j.lead_id
+                WHERE j.job_id = %s
+                  AND j.contractor_id = %s
+                  AND EXISTS (
+                      SELECT 1
+                      FROM opportunities AS o
+                      WHERE o.id = j.opportunity_id
+                        AND o.status = 'ACCEPTED'
+                        AND o.contractor_id = j.contractor_id
+                  )
+                """,
+                (job_id, contractor["contractor_pk"]),
+            )
+            row = cursor.fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+
+    return row
 
 @app.patch(
     "/jobs/{job_id}/status",

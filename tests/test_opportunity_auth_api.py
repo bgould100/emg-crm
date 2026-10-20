@@ -509,6 +509,86 @@ def test_contractor_job_list_does_not_expose_homeowner_contacts(
     assert "customer_email" not in job
     assert "customer_phone" not in job
 
+def test_contractor_can_view_homeowner_contacts_for_own_accepted_job(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    login_contractor(api_client, data["contractor_a"])
+
+    accept_response = api_client.post(
+        f"/opportunities/{data['opportunity_id']}/respond",
+        headers={"Origin": TEST_ORIGIN},
+        json={"decision": "accept"},
+    )
+    assert accept_response.status_code == 200, accept_response.text
+    job_id = accept_response.json()["job_id"]
+
+    response = api_client.get(
+        f"/contractor/jobs/{job_id}",
+        headers={"Origin": TEST_ORIGIN},
+    )
+
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["job_id"] == job_id
+    assert job["customer_name"] == "Temporary Authorization Test"
+    assert job["customer_email"].startswith("auth-test-")
+    assert job["customer_email"].endswith("@example.com")
+    assert "customer_phone" in job
+
+
+def test_contractor_cannot_view_another_contractors_job_contacts(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    login_contractor(api_client, data["contractor_a"])
+
+    accept_response = api_client.post(
+        f"/opportunities/{data['opportunity_id']}/respond",
+        headers={"Origin": TEST_ORIGIN},
+        json={"decision": "accept"},
+    )
+    assert accept_response.status_code == 200, accept_response.text
+    job_id = accept_response.json()["job_id"]
+
+    api_client.cookies.clear()
+    login_contractor(api_client, data["contractor_b"])
+
+    response = api_client.get(
+        f"/contractor/jobs/{job_id}",
+        headers={"Origin": TEST_ORIGIN},
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "Job not found."
+
+
+def test_contractor_job_details_require_authentication(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    login_contractor(api_client, data["contractor_a"])
+
+    accept_response = api_client.post(
+        f"/opportunities/{data['opportunity_id']}/respond",
+        headers={"Origin": TEST_ORIGIN},
+        json={"decision": "accept"},
+    )
+    assert accept_response.status_code == 200, accept_response.text
+    job_id = accept_response.json()["job_id"]
+
+    api_client.cookies.clear()
+
+    response = api_client.get(
+        f"/contractor/jobs/{job_id}",
+        headers={"Origin": TEST_ORIGIN},
+    )
+
+    assert response.status_code == 401, response.text
+
 
 def test_job_status_update_requires_authentication(
     api_client,
