@@ -314,6 +314,106 @@ def test_account_provisioning_rejects_invalid_admin_session(monkeypatch):
     assert response.status_code == 401
     assert calls == []
 
+# -------------------------
+# Contractor profile creation security
+# -------------------------
+
+def test_admin_contractor_creation_rejects_missing_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Contractor creation must not be called.")
+
+    monkeypatch.setattr(api, "create_contractor", fake_create)
+
+    response = client.post(
+        "/admin/contractors",
+        json={
+            "company_name": "Test Contractor",
+            "email": "contractor@example.com",
+            "service_area": ["Test City"],
+            "specialties": ["Plumbing"],
+        },
+    )
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_admin_contractor_creation_rejects_invalid_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Contractor creation must not be called.")
+
+    monkeypatch.setattr(api, "create_contractor", fake_create)
+
+    response = client.post(
+        "/admin/contractors",
+        cookies={"emg_admin_session": "invalid-session"},
+        json={
+            "company_name": "Test Contractor",
+            "email": "contractor@example.com",
+            "service_area": ["Test City"],
+            "specialties": ["Plumbing"],
+        },
+    )
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_legacy_contractor_creation_rejects_missing_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Contractor creation must not be called.")
+
+    monkeypatch.setattr(api, "create_contractor", fake_create)
+
+    response = client.post(
+        "/contractors",
+        json={
+            "company_name": "Test Contractor",
+            "email": "contractor@example.com",
+            "service_area": ["Test City"],
+            "specialties": ["Plumbing"],
+        },
+    )
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_legacy_contractor_creation_rejects_invalid_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Contractor creation must not be called.")
+
+    monkeypatch.setattr(api, "create_contractor", fake_create)
+
+    response = client.post(
+        "/contractors",
+        cookies={"emg_admin_session": "invalid-session"},
+        json={
+            "company_name": "Test Contractor",
+            "email": "contractor@example.com",
+            "service_area": ["Test City"],
+            "specialties": ["Plumbing"],
+        },
+    )
+
+    assert response.status_code == 401
+    assert calls == []
 
 # -------------------------
 # Lead routing security
