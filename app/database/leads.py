@@ -16,6 +16,8 @@ def create_lead(
     customer_name: str | None = None,
     customer_email: str | None = None,
     customer_phone: str | None = None,
+    budget_range: str | None = None,
+    additional_info: str | None = None,
 ) -> dict[str, Any]:
     """Create a homeowner lead and return the saved database record."""
 
@@ -44,11 +46,13 @@ def create_lead(
             requested_bid_count,
             customer_name,
             customer_email,
-            customer_phone
+            customer_phone,
+            budget_range,
+            additional_info
         )
         VALUES (
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s
         )
         RETURNING *
     """
@@ -64,6 +68,8 @@ def create_lead(
         customer_name,
         customer_email,
         customer_phone,
+        budget_range,
+        additional_info,
     )
 
     with get_connection() as connection:

@@ -5,3 +5,4 @@ psycopg[binary]==3.3.6
 boto3==1.43.110
 python-dotenv==1.2.4
 pwdlib[argon2]
+python-multipart

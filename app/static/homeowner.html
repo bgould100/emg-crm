@@ -1,0 +1,542 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Request Contractor Bids | EliteMatch Group</title>
+  <style>
+    :root {
+      --navy: #172b4d;
+      --blue: #2855a6;
+      --light: #f4f7fb;
+      --text: #202b3c;
+      --muted: #687386;
+      --border: #dce3ed;
+      --white: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--light);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+    }
+
+    header {
+      background: var(--navy);
+      color: white;
+      padding: 24px 20px;
+      text-align: center;
+    }
+
+    .brand {
+      margin: 0;
+      font-size: 25px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .tagline {
+      margin: 5px 0 0;
+      color: #dce7f8;
+      font-size: 14px;
+    }
+
+    main {
+      width: min(100% - 28px, 700px);
+      margin: 30px auto;
+    }
+
+    .card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      box-shadow: 0 5px 20px rgba(23, 43, 77, 0.05);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      color: var(--navy);
+      font-size: 27px;
+    }
+
+    .intro {
+      margin: 0 0 26px;
+      color: var(--muted);
+    }
+
+    .field { margin-bottom: 20px; }
+
+    label, legend {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .required { color: #b42318; }
+
+    .hint {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 400;
+    }
+
+    input, select, textarea {
+      display: block;
+      width: 100%;
+      min-height: 46px;
+      padding: 11px 12px;
+      border: 1px solid #c7d0de;
+      border-radius: 8px;
+      background: white;
+      color: var(--text);
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 125px;
+      resize: vertical;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: 2px solid #9bbcf3;
+      border-color: var(--blue);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    fieldset {
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+
+    .upload-box {
+      padding: 16px;
+      border: 1px dashed #9baac0;
+      border-radius: 10px;
+      background: #f9fbfe;
+    }
+
+    input[type="file"] {
+      min-height: auto;
+      padding: 8px;
+      border: 0;
+      background: transparent;
+    }
+
+    .previews {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .preview {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: white;
+    }
+
+    .preview img {
+      display: block;
+      width: 100%;
+      height: 100px;
+      object-fit: cover;
+    }
+
+    .preview span {
+      display: block;
+      overflow-wrap: anywhere;
+      padding: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .submit-button {
+      width: 100%;
+      min-height: 50px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--blue);
+      color: white;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .submit-button:hover { background: #1e4387; }
+
+    .notice {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    footer {
+      padding: 0 20px 28px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 520px) {
+      .card { padding: 20px 16px; }
+      h1 { font-size: 23px; }
+      .grid { grid-template-columns: 1fr; gap: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="brand">EliteMatch Group</p>
+    <p class="tagline">Connecting homeowners with qualified contractors</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h1>Tell Us About Your Project</h1>
+      <p class="intro">
+        Share a few details about the work you need. We'll use this information
+        to help connect you with contractors who serve your area.
+      </p>
+
+      <form id="homeowner-form">
+        <div class="field">
+          <label for="customer_name">
+            Full name <span class="required">*</span>
+          </label>
+          <input id="customer_name" name="customer_name"
+                 autocomplete="name" required maxlength="150">
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="customer_phone">
+              Phone number <span class="required">*</span>
+            </label>
+            <input id="customer_phone" name="customer_phone"
+                   type="tel" autocomplete="tel"
+                   placeholder="208-555-0123" required maxlength="30">
+          </div>
+
+          <div class="field">
+            <label for="customer_email">Email address</label>
+            <input id="customer_email" name="customer_email"
+                   type="email" autocomplete="email" maxlength="254">
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="zip_code">
+              Project ZIP code <span class="required">*</span>
+            </label>
+            <input id="zip_code" name="zip_code"
+                   inputmode="numeric" autocomplete="postal-code"
+                   pattern="[0-9]{5}" maxlength="5"
+                   placeholder="12345" required>
+          </div>
+
+          <div class="field">
+            <label for="service_type">
+              Service needed <span class="required">*</span>
+            </label>
+            <input id="service_type" name="service_type"
+                   placeholder="e.g. Roofing, plumbing"
+                   required minlength="2" maxlength="100">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="description">
+            Describe your project <span class="required">*</span>
+          </label>
+          <textarea id="description" name="description"
+                    minlength="10" maxlength="5000" required
+                    placeholder="Describe the work, the problem, and any details that would help a contractor understand your project."></textarea>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="urgency">When do you need the work?</label>
+            <select id="urgency" name="urgency">
+              <option value="">Select a timeframe</option>
+              <option value="1-2 days">Within 1–2 days</option>
+              <option value="3-7 days">Within 3–7 days</option>
+              <option value="1-2 weeks">Within 1–2 weeks</option>
+              <option value="3+ weeks">3 or more weeks</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="budget_range">Estimated budget</label>
+            <select id="budget_range" name="budget_range">
+              <option value="">Select a budget</option>
+              <option value="prefer_not_to_say">Prefer not to say</option>
+              <option value="under_1000">Under $1,000</option>
+              <option value="1000_2500">$1,000–$2,500</option>
+              <option value="2500_5000">$2,500–$5,000</option>
+              <option value="5000_7500">$5,000–$7,500</option>
+              <option value="7500_10000">$7,500–$10,000</option>
+              <option value="10000_plus">$10,000+</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="requested_bid_count">How many bids would you like?</label>
+          <select id="requested_bid_count" name="requested_bid_count">
+            <option value="1">1 bid</option>
+            <option value="2">2 bids</option>
+            <option value="3" selected>3 bids</option>
+            <option value="4">4 bids</option>
+            <option value="5">5 bids</option>
+          </select>
+          <span class="hint">We'll try to match your request based on contractor availability.</span>
+        </div>
+
+        <div class="field">
+          <label for="photos">Project photos (optional)</label>
+          <div class="upload-box">
+            <input id="photos" name="photos" type="file"
+                   accept="image/jpeg,image/png,image/webp"
+                   multiple>
+            <span class="hint">
+              Select up to 5 JPG, PNG, or WebP images, up to 5 MB each.
+              Avoid including sensitive personal information in photos.
+            </span>
+            <div id="photo-previews" class="previews"></div>
+          </div>
+        </div>
+
+        <button class="submit-button" type="submit">
+          Submit Project Request
+        </button>
+
+        <p class="notice">
+          Submitting this form does not guarantee a specific number of bids.
+        </p>
+        <p id="form-message" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <footer>
+    EliteMatch Group · Contractor referral services
+  </footer>
+
+    <script>
+    const form = document.getElementById("homeowner-form");
+    const photoInput = document.getElementById("photos");
+    const photoPreviews = document.getElementById("photo-previews");
+    const formMessage = document.getElementById("form-message");
+
+    const MAX_PHOTOS = 5;
+    const MAX_PHOTO_SIZE = 5 * 1024 * 1024;
+    const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+    function validatePhotos(files) {
+        if (files.length > MAX_PHOTOS) {
+        return "Please select no more than five photos.";
+        }
+
+        for (const file of files) {
+        if (!ALLOWED_TYPES.includes(file.type)) {
+            return "Photos must be JPG, PNG, or WebP images.";
+        }
+
+        if (file.size > MAX_PHOTO_SIZE) {
+            return "Each photo must be 5 MB or smaller.";
+        }
+        }
+
+        return null;
+    }
+
+    function renderPhotoPreviews() {
+        photoPreviews.replaceChildren();
+
+        for (const file of photoInput._selectedFiles || []) {
+            const preview = document.createElement("div");
+            const image = document.createElement("img");
+            const caption = document.createElement("p");
+            const removeButton = document.createElement("button");
+
+            preview.className = "photo-preview";
+
+            image.alt = `Preview of ${file.name}`;
+            image.style.maxWidth = "150px";
+            image.style.maxHeight = "150px";
+            image.style.objectFit = "cover";
+            image.src = URL.createObjectURL(file);
+
+            image.addEventListener("load", () => {
+                URL.revokeObjectURL(image.src);
+            }, { once: true });
+
+            caption.textContent = file.name;
+
+            removeButton.type = "button";
+            removeButton.textContent = "Remove";
+            removeButton.setAttribute(
+                "aria-label",
+                `Remove ${file.name}`
+            );
+
+            removeButton.addEventListener("click", () => {
+                photoInput._selectedFiles =
+                    (photoInput._selectedFiles || []).filter(
+                        selectedFile => selectedFile !== file
+                    );
+
+                renderPhotoPreviews();
+            });
+
+            preview.append(image, caption, removeButton);
+            photoPreviews.appendChild(preview);
+        }
+    }
+
+
+    photoInput._selectedFiles = [];
+
+    photoInput.addEventListener("change", () => {
+        const existingFiles = photoInput._selectedFiles || [];
+        const newlySelectedFiles = Array.from(photoInput.files || []);
+
+        // The input is cleared so the same file can be selected again later.
+        photoInput.value = "";
+
+        const combinedFiles = [...existingFiles];
+
+        for (const file of newlySelectedFiles) {
+            const alreadySelected = combinedFiles.some(
+                existing =>
+                    existing.name === file.name &&
+                    existing.size === file.size &&
+                    existing.lastModified === file.lastModified
+            );
+
+            if (!alreadySelected) {
+                combinedFiles.push(file);
+            }
+        }
+
+        const validationError = validatePhotos(combinedFiles);
+
+        if (validationError) {
+            formMessage.textContent = validationError;
+            return;
+        }
+
+        photoInput._selectedFiles = combinedFiles;
+        formMessage.textContent = "";
+
+        renderPhotoPreviews();
+    });
+
+
+    form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        if (!form.reportValidity()) {
+        return;
+        }
+
+        const files = photoInput._selectedFiles || [];
+        const validationError = validatePhotos(files);
+
+        if (validationError) {
+        formMessage.textContent = validationError;
+        return;
+        }
+
+        const submitButton = form.querySelector(
+        'button[type="submit"], input[type="submit"]'
+        );
+
+        const originalButtonText = submitButton
+        ? (submitButton.tagName === "INPUT"
+            ? submitButton.value
+            : submitButton.textContent)
+        : "";
+
+        if (submitButton) {
+        submitButton.disabled = true;
+
+        if (submitButton.tagName === "INPUT") {
+            submitButton.value = "Submitting...";
+        } else {
+            submitButton.textContent = "Submitting...";
+        }
+        }
+
+        formMessage.textContent = "Submitting your request...";
+
+        try {
+        const formData = new FormData(form);
+
+        for (const file of photoInput._selectedFiles || []) {
+            formData.append("photos", file, file.name);
+        }
+
+        const response = await fetch("/homeowner/submit", {
+            method: "POST",
+            body: formData
+        });
+
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            const detail = Array.isArray(result.detail)
+            ? result.detail.map(item => item.msg || "Invalid input").join(" ")
+            : result.detail;
+
+            throw new Error(
+            detail || "Your request could not be submitted. Please try again."
+            );
+        }
+
+        formMessage.textContent =
+            `${result.message} Your EMG Lead ID is ${result.lead_id}. ` +
+            "Please keep this ID for your records.";
+
+        formMessage.setAttribute("role", "status");
+        form.reset();
+        photoInput._selectedFiles = [];
+        photoPreviews.replaceChildren();
+
+        } catch (error) {
+        formMessage.textContent =
+            error.message ||
+            "We couldn't submit your request. Please try again.";
+        } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+
+            if (submitButton.tagName === "INPUT") {
+            submitButton.value = originalButtonText;
+            } else {
+            submitButton.textContent = originalButtonText;
+            }
+        }
+        }
+    });
+    </script>
+</body>
+</html>

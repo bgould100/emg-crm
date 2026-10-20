@@ -207,14 +207,16 @@ def respond_to_opportunity(
     if next_opportunities:
         count = len(next_opportunities)
         result["message"] = (
+            f"Opportunity {decision}ed successfully. "
             f"Created {count} additional contractor "
             f"opportunit{'y' if count == 1 else 'ies'}."
         )
+    elif decision == "accept":
+        result["message"] = (
+            "Opportunity accepted successfully."
+        )
     else:
         result["message"] = (
-            "No additional opportunities were created. The requested "
-            "bid count may already be covered, invitations may still be "
-            "pending, or no eligible contractors may remain."
+            "Opportunity declined."
         )
-
     return result

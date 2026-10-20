@@ -83,3 +83,65 @@ def list_available_contractors() -> list[dict[str, Any]]:
         with connection.cursor() as cursor:
             cursor.execute(query)
             return list(cursor.fetchall())
+
+
+def update_contractor_matching_profile(
+    *,
+    contractor_pk: int,
+    service_area: list[str],
+    specialties: list[str],
+) -> dict[str, Any]:
+    """Update matching fields without changing contractor status."""
+
+    normalized_areas = list(
+        dict.fromkeys(area.strip() for area in service_area if area.strip())
+    )
+    normalized_specialties = list(
+        dict.fromkeys(item.strip() for item in specialties if item.strip())
+    )
+
+    if not normalized_areas:
+        raise ValueError("Enter at least one service ZIP code.")
+
+    if not normalized_specialties:
+        raise ValueError("Select at least one service specialty.")
+
+    # US ZIP codes must be exactly five digits. Keep them as strings.
+    invalid_zips = [
+        area for area in normalized_areas
+        if len(area) != 5 or not area.isdigit()
+    ]
+    if invalid_zips:
+        raise ValueError(
+            "Each service ZIP code must contain exactly five digits."
+        )
+
+    if any(len(item) > 100 for item in normalized_specialties):
+        raise ValueError("Each specialty must be 100 characters or fewer.")
+
+    query = """
+        UPDATE contractors
+        SET service_area = %s,
+            specialties = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        RETURNING contractor_id, company_name, service_area,
+                  specialties, availability, status
+    """
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                (
+                    ",".join(normalized_areas),
+                    ",".join(normalized_specialties),
+                    contractor_pk,
+                ),
+            )
+            contractor = cursor.fetchone()
+
+    if contractor is None:
+        raise LookupError("Contractor profile not found.")
+
+    return contractor

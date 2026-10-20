@@ -1,4 +1,4 @@
-﻿
+
 import secrets
 from typing import Any
 
@@ -113,16 +113,23 @@ def route_opportunities_to_fill_slots(
                 # Active and available: 20 points
                 # Matching specialty: 40 points
                 # Matching ZIP code: 30 points
+                
+                specialty_match = (
+                    lead["service_type"].strip().casefold() in specialties
+                )
+                zip_match = lead["zip_code"].strip() in service_areas
+
+                # Preserve the existing scoring system.
                 score = 20
-
-                if lead["service_type"].strip().casefold() in specialties:
+                if specialty_match:
                     score += 40
-
-                if lead["zip_code"].strip() in service_areas:
+                if zip_match:
                     score += 30
 
-                if score >= MINIMUM_MATCH_SCORE:
+                # Both conditions are mandatory, regardless of the score.
+                if specialty_match and zip_match and score >= MINIMUM_MATCH_SCORE:
                     matches.append((score, contractor))
+
 
             # Highest score first; company name breaks ties consistently.
             matches.sort(

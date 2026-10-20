@@ -1,8 +1,12 @@
 import os
 import secrets
+import uuid
 from typing import Literal
+import re
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 from app.database.auth import (
@@ -16,6 +20,7 @@ from app.database.leads import create_lead, get_lead_by_lead_id
 from app.database.contractors import (
     create_contractor,
     list_available_contractors,
+    update_contractor_matching_profile,
 )
 from app.services.matching import route_opportunities_to_fill_slots
 from app.services.opportunities import respond_to_opportunity
@@ -36,13 +41,54 @@ from app.services.login_rate_limit import (
 )
 
 from app.api.financial import router as financial_router
+def normalize_us_phone(phone: str) -> str:
+    """Validate a US phone number and normalize it to 10 digits."""
+
+    phone = phone.strip()
+
+    # Allow digits, spaces, parentheses, hyphens, periods, and
+    # an optional leading + for an international-style country code.
+    if not re.fullmatch(r"\+?[\d\s().-]+", phone):
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a valid US phone number.",
+        )
+
+    digits = re.sub(r"\D", "", phone)
+
+    # Accept 10 digits, or 11 digits beginning with the US country code 1.
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+
+    if len(digits) != 10:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a 10-digit US phone number, optionally with country code +1.",
+        )
+
+    # US area codes and exchange codes cannot begin with 0 or 1.
+    if digits[0] not in "23456789" or digits[3] not in "23456789":
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a valid US phone number.",
+        )
+
+    return digits
 app = FastAPI(
     title="EliteMatch Group API",
     description="Homeowner lead intake and contractor referral backend.",
     version="0.2.0",
 )
 app.include_router(financial_router)
+@app.get("/", include_in_schema=False)
+def contractor_portal():
+    frontend_path = Path(__file__).resolve().parent.parent / "static" / "index.html"
+    return FileResponse(frontend_path)
 
+@app.get("/homeowner", include_in_schema=False)
+def homeowner_portal():
+    frontend_path = Path(__file__).resolve().parent.parent / "static" / "homeowner.html"
+    return FileResponse(frontend_path)
 
 # -------------------------
 # Request and response models
@@ -57,7 +103,7 @@ class LeadCreate(BaseModel):
     urgency: str | None = None
     customer_name: str | None = None
     customer_email: str | None = None
-    customer_phone: str | None = None
+    customer_phone: str = Field(min_length=1, max_length=40)
 
 
 class LeadResponse(BaseModel):
@@ -77,6 +123,9 @@ class ContractorCreate(BaseModel):
     service_area: list[str] = Field(min_length=1)
     specialties: list[str] = Field(min_length=1)
 
+class ContractorMatchingProfileUpdate(BaseModel):
+    service_area: list[str] = Field(min_length=1, max_length=100)
+    specialties: list[str] = Field(min_length=1, max_length=50)
 
 class ContractorResponse(BaseModel):
     contractor_id: str
@@ -138,6 +187,9 @@ class ContractorJobResponse(BaseModel):
     zip_code: str
     service_type: str
     description: str
+    customer_name: str
+    customer_email: str | None = None
+    customer_phone: str | None = None
     quoted_amount: float | None = None
     created_at: str
     updated_at: str
@@ -369,6 +421,64 @@ def contractor_me(request: Request):
         "email": contractor["email"],
     }
 
+@app.get("/contractor/profile")
+def read_contractor_matching_profile(request: Request):
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT contractor_id, company_name, service_area,
+                       specialties, availability, status
+                FROM contractors
+                WHERE id = %s
+                """,
+                (contractor["contractor_pk"],),
+            )
+            profile = cursor.fetchone()
+
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Contractor profile not found.")
+
+    return {
+        "contractor_id": profile["contractor_id"],
+        "company_name": profile["company_name"],
+        "service_area": profile["service_area"].split(","),
+        "specialties": profile["specialties"].split(","),
+        "availability": profile["availability"],
+        "status": profile["status"],
+    }
+
+
+@app.put("/contractor/profile")
+def update_contractor_profile(
+    profile_input: ContractorMatchingProfileUpdate,
+    request: Request,
+):
+    require_allowed_origin(request)
+    contractor = require_contractor(request)
+
+    try:
+        profile = update_contractor_matching_profile(
+            contractor_pk=contractor["contractor_pk"],
+            service_area=profile_input.service_area,
+            specialties=profile_input.specialties,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return {
+        "message": "Matching profile updated.",
+        "contractor_id": profile["contractor_id"],
+        "company_name": profile["company_name"],
+        "service_area": profile["service_area"].split(","),
+        "specialties": profile["specialties"].split(","),
+        "availability": profile["availability"],
+        "status": profile["status"],
+    }
 
 @app.get(
     "/contractor/opportunities",
@@ -397,6 +507,7 @@ def contractor_opportunity_inbox(request: Request):
                 JOIN leads AS l ON l.id = o.lead_id
                 JOIN contractors AS c ON c.id = o.contractor_id
                 WHERE c.contractor_id = %s
+                    AND o.status = 'PENDING'
                 ORDER BY o.sent_at DESC, o.id DESC
                 """,
                 (contractor["contractor_id"],),
@@ -472,6 +583,226 @@ def contractor_opportunity_detail(
         ),
     }
 
+@app.get("/contractor/opportunities/{opportunity_id}/photos")
+def contractor_opportunity_photos(
+    opportunity_id: str,
+    request: Request,
+):
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    p.photo_id,
+                    p.original_filename,
+                    p.content_type,
+                    p.uploaded_at
+                FROM photos AS p
+                JOIN opportunities AS o ON o.lead_id = p.lead_id
+                JOIN contractors AS c ON c.id = o.contractor_id
+                WHERE o.opportunity_id = %s
+                  AND c.contractor_id = %s
+                  AND (
+                      p.contractor_id IS NULL
+                      OR p.contractor_id = c.id
+                  )
+                  AND (
+                      p.job_id IS NULL
+                      OR EXISTS (
+                          SELECT 1
+                          FROM jobs AS j
+                          WHERE j.id = p.job_id
+                            AND j.opportunity_id = o.id
+                      )
+                  )
+                ORDER BY p.uploaded_at, p.id
+                """,
+                (opportunity_id, contractor["contractor_id"]),
+            )
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "photo_id": row["photo_id"],
+            "filename": row["original_filename"],
+            "content_type": row["content_type"],
+            "uploaded_at": row["uploaded_at"].isoformat(),
+            "url": f"/contractor/photos/{row['photo_id']}",
+        }
+        for row in rows
+    ]
+
+
+@app.get("/contractor/jobs/{job_id}/photos")
+def contractor_job_photos(
+    job_id: str,
+    request: Request,
+):
+    contractor = require_contractor(request)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    p.photo_id,
+                    p.original_filename,
+                    p.content_type,
+                    p.uploaded_at
+                FROM photos AS p
+                JOIN jobs AS j ON j.lead_id = p.lead_id
+                WHERE j.job_id = %s
+                  AND j.contractor_id = %s
+                  AND (
+                      p.contractor_id IS NULL
+                      OR p.contractor_id = j.contractor_id
+                  )
+                  AND (
+                      p.job_id IS NULL
+                      OR p.job_id = j.id
+                  )
+                ORDER BY p.uploaded_at, p.id
+                """,
+                (job_id, contractor["contractor_pk"]),
+            )
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "photo_id": row["photo_id"],
+            "filename": row["original_filename"],
+            "content_type": row["content_type"],
+            "uploaded_at": row["uploaded_at"].isoformat(),
+            "url": f"/contractor/photos/{row['photo_id']}",
+        }
+        for row in rows
+    ]
+
+
+@app.get("/contractor/photos/{photo_id}")
+def contractor_photo(
+    photo_id: str,
+    request: Request,
+):
+    contractor = require_contractor(request)
+    contractor_pk = contractor["contractor_pk"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    p.s3_key,
+                    p.content_type
+                FROM photos AS p
+                WHERE p.photo_id = %s
+                  AND (
+                      p.contractor_id IS NULL
+                      OR p.contractor_id = %s
+                  )
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM opportunities AS o
+                          WHERE o.lead_id = p.lead_id
+                            AND o.contractor_id = %s
+                            AND (
+                                p.job_id IS NULL
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM jobs AS j
+                                    WHERE j.id = p.job_id
+                                      AND j.opportunity_id = o.id
+                                )
+                            )
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM jobs AS j
+                          WHERE j.lead_id = p.lead_id
+                            AND j.contractor_id = %s
+                            AND (
+                                p.job_id IS NULL
+                                OR p.job_id = j.id
+                            )
+                      )
+                  )
+                """,
+                (
+                    photo_id,
+                    contractor_pk,
+                    contractor_pk,
+                    contractor_pk,
+                ),
+            )
+            row = cursor.fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    s3_key = row["s3_key"]
+
+    # This endpoint serves local development files only.
+    # Never interpret a database value as an arbitrary filesystem path.
+    if not s3_key.startswith("local/"):
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    stored_name = s3_key.removeprefix("local/")
+
+    if (
+        not stored_name
+        or Path(stored_name).name != stored_name
+        or "/" in stored_name
+        or "\\" in stored_name
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    upload_dir = (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "uploads"
+    )
+    file_path = upload_dir / stored_name
+
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Photo file not found.",
+        )
+
+    allowed_types = {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    }
+    content_type = row["content_type"]
+
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    return FileResponse(
+        path=file_path,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
 @app.post("/admin/contractor-accounts", status_code=201)
 def admin_create_contractor_account(
     account_input: ContractorAccountCreate,
@@ -520,7 +851,12 @@ def health_check():
 @app.post("/leads", response_model=LeadResponse, status_code=201)
 def submit_lead(lead_input: LeadCreate):
     try:
-        lead = create_lead(**lead_input.model_dump())
+        lead_data = lead_input.model_dump()
+        lead_data["customer_phone"] = normalize_us_phone(
+            lead_data["customer_phone"]
+        )
+
+        lead = create_lead(**lead_data)
 
         return {
             "lead_id": lead["lead_id"],
@@ -536,6 +872,235 @@ def submit_lead(lead_input: LeadCreate):
             detail=str(error),
         ) from error
 
+# -------------------------
+# Homeowner Intake
+# -------------------------
+
+@app.post("/homeowner/submit", status_code=201)
+async def submit_homeowner_request(
+    request: Request,
+    customer_name: str = Form(...),
+    customer_phone: str = Form(...),
+    zip_code: str = Form(...),
+    service_type: str = Form(...),
+    description: str = Form(...),
+    customer_email: str | None = Form(default=None),
+    urgency: str | None = Form(default=None),
+    budget_range: str | None = Form(default=None),
+    requested_bid_count: int = Form(default=3),
+    additional_info: str | None = Form(default=None),
+    photos: list[UploadFile] | None = File(default=None),
+):
+    require_allowed_origin(request)
+
+    customer_name = customer_name.strip()
+    customer_phone = normalize_us_phone(customer_phone)
+    zip_code = zip_code.strip()
+    service_type = service_type.strip()
+    description = description.strip()
+    customer_email = (customer_email or "").strip() or None
+    additional_info = (additional_info or "").strip() or None
+
+    if not customer_name or not customer_phone:
+        raise HTTPException(
+            status_code=422,
+            detail="Customer name and phone are required.",
+        )
+
+    if len(zip_code) != 5 or not zip_code.isdigit():
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a valid five-digit ZIP code.",
+        )
+
+    if not service_type or not description:
+        raise HTTPException(
+            status_code=422,
+            detail="Service type and job description are required.",
+        )
+
+    if requested_bid_count < 1 or requested_bid_count > 5:
+        raise HTTPException(
+            status_code=422,
+            detail="Requested bids must be between 1 and 5.",
+        )
+
+    allowed_urgencies = {
+        "1-2 days",
+        "3-7 days",
+        "1-2 weeks",
+        "3+ weeks",
+    }
+
+    if urgency and urgency not in allowed_urgencies:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid requested timeline.",
+        )
+
+    allowed_budgets = {
+        "prefer_not_to_say",
+        "under_1000",
+        "1000_2500",
+        "2500_5000",
+        "5000_7500",
+        "7500_10000",
+        "10000_plus",
+    }
+
+    if budget_range and budget_range not in allowed_budgets:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid budget range.",
+        )
+
+    # Validate every photo before creating the lead.
+    uploaded_photos = []
+    photos = photos or []
+
+    if len(photos) > 5:
+        raise HTTPException(
+            status_code=422,
+            detail="You can upload a maximum of five photos.",
+        )
+
+    max_photo_size = 5 * 1024 * 1024
+
+    for photo in photos:
+    # Browsers may submit an empty file entry when no photo is selected.
+        if not photo.filename:
+            continue
+
+        content = await photo.read(max_photo_size + 1)
+
+        if len(content) > max_photo_size:
+            raise HTTPException(
+                status_code=422,
+                detail="Each photo must be 5 MB or smaller.",
+            )
+
+        if content.startswith(b"\xff\xd8\xff"):
+            content_type = "image/jpeg"
+        elif content.startswith(b"\x89PNG\r\n\x1a\n"):
+            content_type = "image/png"
+        elif (
+            len(content) >= 12
+            and content.startswith(b"RIFF")
+            and content[8:12] == b"WEBP"
+        ):
+            content_type = "image/webp"
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="Photos must be valid JPEG, PNG, or WebP images.",
+            )
+
+        original_filename = Path(
+            photo.filename or "homeowner-photo"
+        ).name[:255]
+
+        uploaded_photos.append(
+            (uuid.uuid4().hex, content, content_type, original_filename)
+        )
+
+    # Save the lead and the additional homeowner information.
+    try:
+        lead = create_lead(
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            customer_email=customer_email,
+            zip_code=zip_code,
+            service_type=service_type,
+            description=description,
+            urgency=urgency,
+            budget_range=budget_range,
+            requested_bid_count=requested_bid_count,
+            additional_info=additional_info,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    # Store images privately on the local development machine.
+    upload_dir = (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "uploads"
+    )
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files = []
+
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                for stored_name, content, content_type, original_filename in uploaded_photos:
+                    file_path = upload_dir / stored_name
+                    file_path.write_bytes(content)
+                    saved_files.append(file_path)
+
+                    cursor.execute(
+                        """
+                        INSERT INTO photos (
+                            photo_id,
+                            lead_id,
+                            s3_key,
+                            original_filename,
+                            content_type
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            f"EMGP-{stored_name[:16].upper()}",
+                            lead["id"],
+                            f"local/{stored_name}",
+                            original_filename,
+                            content_type,
+                        ),
+                    )
+    except Exception:
+        for file_path in saved_files:
+            file_path.unlink(missing_ok=True)
+
+        print(
+            f"Homeowner photo storage failed for lead "
+            f"{lead['lead_id']}."
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Your lead was created, but photo storage failed. "
+                "Please contact EMG before resubmitting."
+            ),
+        )
+
+    # Use the existing matching engine; never call it with the
+    # internal numeric database ID.
+    try:
+        opportunities = route_opportunities_to_fill_slots(
+            lead["lead_id"]
+        )
+        routing_status = "completed"
+    except Exception:
+        opportunities = []
+        routing_status = "requires_review"
+        print(
+            f"Automatic matching failed for lead "
+            f"{lead['lead_id']}."
+        )
+
+    return {
+        "message": (
+            "Your request has been received."
+            if routing_status == "completed"
+            else "Your request has been received and will be reviewed."
+        ),
+        "lead_id": lead["lead_id"],
+        "routing_status": routing_status,
+        "opportunities_created": len(opportunities),
+    }
 
 @app.get("/leads/{lead_id}", response_model=LeadResponse)
 def read_lead(lead_id: str):
@@ -711,7 +1276,6 @@ def decide_opportunity(
     response_model=list[ContractorJobResponse],
 )
 def list_contractor_jobs(request: Request):
-    require_allowed_origin(request)
     contractor = require_contractor(request)
 
     with get_connection() as connection:
@@ -724,12 +1288,22 @@ def list_contractor_jobs(request: Request):
                     l.zip_code,
                     l.service_type,
                     l.description,
+                    l.customer_name,
+                    l.customer_email,
+                    l.customer_phone,
                     j.quoted_amount::float AS quoted_amount,
                     j.created_at::text AS created_at,
                     j.updated_at::text AS updated_at
                 FROM jobs AS j
                 JOIN leads AS l ON l.id = j.lead_id
                 WHERE j.contractor_id = %s
+                  AND EXISTS (
+                      SELECT 1
+                      FROM opportunities AS o
+                      WHERE o.id = j.opportunity_id
+                        AND o.status = 'ACCEPTED'
+                        AND o.contractor_id = j.contractor_id
+                  )
                 ORDER BY j.updated_at DESC
                 """,
                 (contractor["contractor_pk"],),

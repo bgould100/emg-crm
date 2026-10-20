@@ -1,0 +1,5 @@
+ALTER TABLE leads
+    ADD COLUMN IF NOT EXISTS budget_range VARCHAR(40);
+
+ALTER TABLE leads
+    ADD COLUMN IF NOT EXISTS additional_info TEXT;

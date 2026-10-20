@@ -10,7 +10,10 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://emg:emg_dev_password@emg-postgres:5432/emg
+      DATABASE_URL: ${DATABASE_URL}
+      EMG_ALLOWED_ORIGIN: http://localhost:8000
+    volumes:
+      - ./data/uploads:/app/data/uploads
     networks:
       - emg-network
     restart: unless-stopped

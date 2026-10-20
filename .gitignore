@@ -9,3 +9,9 @@ dotenv
 test_db_connection
 check_db_connection
 test-results.txt
+
+# Local application data and homeowner uploads
+data/
+
+# Generated API specification
+openapi.json

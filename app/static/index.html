@@ -1,0 +1,1103 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#142b4a">
+  <title>EliteMatch Group | Contractor Portal</title>
+  <style>
+    :root {
+      --navy: #142b4a;
+      --blue: #2864a8;
+      --light: #f3f6fa;
+      --border: #dce3ec;
+      --text: #202b3c;
+      --muted: #637187;
+      --green: #16804a;
+      --red: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--light);
+      color: var(--text);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .topbar {
+      background: var(--navy);
+      color: white;
+      padding: 17px max(18px, calc((100% - 1080px) / 2));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .brand { font-weight: 800; font-size: 1.05rem; letter-spacing: .02em; }
+    .brand small { display: block; font-size: .76rem; font-weight: 400; opacity: .78; }
+    .page { max-width: 1080px; margin: 26px auto; padding: 0 18px 40px; }
+    h1 { margin: 0 0 7px; font-size: clamp(1.5rem, 4vw, 2rem); }
+    h2 { margin: 0 0 15px; font-size: 1.15rem; }
+    h3 { margin: 0 0 8px; font-size: 1rem; }
+    p { line-height: 1.5; }
+    .muted { color: var(--muted); }
+    .small { font-size: .86rem; }
+    .card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-top: 18px;
+      box-shadow: 0 2px 8px #142b4a08;
+    }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .tabs {
+      display: flex; gap: 8px; overflow-x: auto; margin: 22px 0 10px;
+      padding-bottom: 5px;
+    }
+    .tab {
+      flex: 0 0 auto; border: 1px solid var(--border); border-radius: 10px;
+      background: white; color: var(--text); padding: 11px 15px;
+    }
+    .tab.active { background: var(--navy); border-color: var(--navy); color: white; }
+    label { display: block; font-weight: 650; font-size: .9rem; margin: 13px 0 6px; }
+    input, select, textarea {
+      width: 100%; min-width: 0; padding: 11px 12px;
+      border: 1px solid #c8d2df; border-radius: 9px; background: white; color: var(--text);
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    .field { min-width: 0; }
+    .btn {
+      border: 0; border-radius: 9px; padding: 11px 15px;
+      background: var(--blue); color: white; font-weight: 700;
+    }
+    .btn.secondary { background: #e8eef6; color: var(--navy); }
+    .btn.danger { background: #fff0ee; color: var(--red); }
+    .btn.success { background: #e8f7ef; color: var(--green); }
+    .btn:disabled { opacity: .55; cursor: wait; }
+    .status {
+      display: inline-block; padding: 4px 9px; border-radius: 999px;
+      background: #edf2f8; color: #34445a; font-size: .78rem; font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .notice { border-radius: 10px; padding: 12px 14px; margin: 14px 0; }
+    .notice.error { background: #fff0ee; color: var(--red); }
+    .notice.info { background: #eaf2fc; color: #214e82; }
+    .notice.good { background: #e8f7ef; color: var(--green); }
+    .item { border-top: 1px solid var(--border); padding: 17px 0; }
+    .item:first-child { border-top: 0; padding-top: 0; }
+    .item:last-child { padding-bottom: 0; }
+    .hidden { display: none !important; }
+    .login-wrap { max-width: 440px; margin: 45px auto; }
+    .empty { text-align: center; padding: 24px 10px; color: var(--muted); }
+    .footer { text-align: center; padding: 20px; color: var(--muted); font-size: .8rem; }
+    #globalMessage { white-space: pre-wrap; overflow-wrap: anywhere; }
+    @media (max-width: 680px) {
+      .page { margin-top: 20px; padding-left: 12px; padding-right: 12px; }
+      .grid { grid-template-columns: 1fr; }
+      .card { padding: 16px; }
+      .topbar { padding: 15px 14px; }
+      .btn { min-height: 42px; }
+      .between.mobile-stack { align-items: flex-start; flex-direction: column; }
+    }
+
+    .photo-gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 14px 0;
+    }
+
+    .photo-thumb {
+    width: 112px;
+    height: 92px;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    }
+
+    .photo-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    }
+
+    .photo-thumb:focus-visible {
+    outline: 3px solid #367bf5;
+    outline-offset: 2px;
+    }
+
+    .photo-viewer {
+    max-width: 95vw;
+    max-height: 95vh;
+    padding: 16px;
+    border: 0;
+    border-radius: 12px;
+    color: inherit;
+    background: Canvas;
+    }
+
+    .photo-viewer::backdrop {
+    background: rgb(0 0 0 / 75%);
+    }
+
+    .photo-viewer img {
+    display: block;
+    max-width: 88vw;
+    max-height: 78vh;
+    object-fit: contain;
+    }
+
+    .photo-viewer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+    }
+
+    .photo-viewer-close {
+    padding: 8px 12px;
+    cursor: pointer;
+    }
+
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ELITEMATCH GROUP<small>Contractor Portal</small></div>
+    <button id="logoutBtn" class="btn secondary hidden" type="button">Log out</button>
+  </header>
+
+  <main class="page">
+    <div id="globalMessage" aria-live="polite"></div>
+
+    <section id="loginView" class="login-wrap">
+      <div class="card">
+        <h1>Welcome back</h1>
+        <p class="muted">Sign in to manage your opportunities, jobs, and payments.</p>
+        <form id="loginForm">
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="username" required>
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button class="btn" type="submit" style="width:100%;margin-top:18px">Sign in</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="dashboardView" class="hidden">
+      <h1 id="welcomeHeading">Contractor dashboard</h1>
+      <p class="muted">Manage your EMG activity in one place.</p>
+
+      <nav class="tabs" aria-label="Dashboard sections">
+        <button class="tab active" data-tab="opportunities" type="button">Opportunities</button>
+        <button class="tab" data-tab="jobs" type="button">My Jobs</button>
+        <button class="tab" data-tab="collections" type="button">Collections</button>
+        <button class="tab" data-tab="agreements" type="button">Payment Agreements</button>
+        <button class="tab" data-tab="profile" type="button">Matching Profile</button>
+      </nav>
+
+      <section id="panel-opportunities" class="card">
+        <div class="between mobile-stack">
+          <div><h2>Available opportunities</h2><p class="muted small">Review new referrals and respond to each opportunity.</p></div>
+          <button class="btn secondary" id="refreshOpportunities" type="button">Refresh</button>
+        </div>
+        <div id="opportunitiesList"><p class="empty">Loading opportunities…</p></div>
+      </section>
+
+      <section id="panel-jobs" class="card hidden">
+        <div class="between mobile-stack">
+          <div><h2>My jobs</h2><p class="muted small">Track work from quote through payment.</p></div>
+          <button class="btn secondary" id="refreshJobs" type="button">Refresh</button>
+        </div>
+        <div id="jobsList"><p class="empty">Your jobs will appear here.</p></div>
+      </section>
+
+      <section id="panel-collections" class="card hidden">
+        <h2>Report a collection</h2>
+        <p class="muted small">Record a customer payment against one of your jobs.</p>
+        <form id="collectionForm">
+          <label for="collectionJob">Job</label>
+          <select id="collectionJob" required><option value="">Load your jobs first</option></select>
+          <div class="grid">
+            <div class="field">
+              <label for="collectionAmount">Amount collected ($)</label>
+              <input id="collectionAmount" type="number" min="0.01" step="0.01" required>
+            </div>
+            <div class="field">
+              <label for="collectionDate">Date collected</label>
+              <input id="collectionDate" type="date" required>
+            </div>
+          </div>
+          <button class="btn" type="submit" style="margin-top:16px">Submit collection</button>
+        </form>
+      </section>
+
+      <section id="panel-agreements" class="card hidden">
+        <h2>Payment agreements</h2>
+        <p class="muted small">View or create an agreement for one of your jobs.</p>
+        <label for="agreementJob">Job</label>
+        <select id="agreementJob"><option value="">Load your jobs first</option></select>
+        <div class="row" style="margin-top:12px">
+          <button id="loadAgreement" class="btn secondary" type="button">View agreement</button>
+        </div>
+        <div id="agreementResult" style="margin-top:15px"></div>
+        <details style="margin-top:18px">
+          <summary style="cursor:pointer;font-weight:700">Create payment agreement</summary>
+          <form id="agreementForm">
+            <label for="arrangementType">Arrangement type</label>
+            <input id="arrangementType" placeholder="e.g. full_payment, installments" required>
+            <label for="invoiceTotal">Invoice total ($)</label>
+            <input id="invoiceTotal" type="number" min="0.01" step="0.01" required>
+            <label for="scheduleType">Schedule type (optional)</label>
+            <input id="scheduleType" placeholder="e.g. one_time, weekly, monthly">
+            <div class="grid">
+              <div class="field">
+                <label for="installmentAmount">Installment amount ($)</label>
+                <input id="installmentAmount" type="number" min="0.01" step="0.01">
+              </div>
+              <div class="field">
+                <label for="finalInstallmentAmount">Final installment ($)</label>
+                <input id="finalInstallmentAmount" type="number" min="0.01" step="0.01">
+              </div>
+            </div>
+            <div class="grid">
+              <div class="field">
+                <label for="planStartDate">Plan start date</label>
+                <input id="planStartDate" type="date">
+              </div>
+              <div class="field">
+                <label for="finalDueDate">Final due date</label>
+                <input id="finalDueDate" type="date">
+              </div>
+            </div>
+            <label for="customSchedule">Custom schedule (optional JSON)</label>
+            <textarea id="customSchedule" placeholder='{"payments": []}'></textarea>
+            <button class="btn" type="submit" style="margin-top:16px">Create agreement</button>
+          </form>
+        </details>
+      </section>
+      
+      <section id="panel-profile" class="card hidden">
+        <h2>Matching Profile</h2>
+        <p class="muted small">
+          Keep your service areas and specialties up to date so EMG can match
+          you with relevant homeowner requests. Changes do not alter your
+          contractor approval or availability status.
+        </p>
+
+        <form id="profileForm">
+          <label for="profileZipCodes">Service ZIP codes</label>
+          <textarea
+            id="profileZipCodes"
+            placeholder="83814, 83815, 83835"
+            required
+          ></textarea>
+          <p class="muted small">
+            Enter five-digit US ZIP codes separated by commas or new lines.
+          </p>
+
+          <label for="profileSpecialties">Services offered</label>
+          <textarea
+            id="profileSpecialties"
+            placeholder="Roofing, Plumbing, Electrical"
+            required
+          ></textarea>
+          <p class="muted small">
+            Enter specialties separated by commas or new lines. Use the same
+            service names homeowners select in EMG.
+          </p>
+
+          <div id="profileStatus" class="notice info hidden" aria-live="polite"></div>
+
+          <button id="saveProfileBtn" class="btn" type="submit">
+            Save Matching Profile
+          </button>
+          <button id="reloadProfileBtn" class="btn secondary" type="button">
+            Reload Saved Profile
+          </button>
+        </form>
+      </section>
+    </section>
+  </main>
+  <div class="footer">EliteMatch Group · Contractor Portal</div>
+
+  <script>
+    const API = "";
+    const $ = (id) => document.getElementById(id);
+    let jobsCache = [];
+
+    function message(text = "", kind = "info") {
+      const box = $("globalMessage");
+      box.className = text ? `notice ${kind}` : "";
+      box.textContent = text;
+    }
+
+    async function request(path, options = {}) {
+      const config = {
+        credentials: "include",
+        ...options,
+        headers: {
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+          ...(options.headers || {})
+        }
+      };
+      let response;
+      try {
+        response = await fetch(API + path, config);
+      } catch {
+        throw new Error("Could not reach the EMG API. Check that the server is running.");
+      }
+      const text = await response.text();
+      let data = null;
+      if (text) {
+        try { data = JSON.parse(text); }
+        catch { data = { detail: text }; }
+      }
+      if (!response.ok) {
+        if (response.status === 401) {
+          showLogin("Your session may have expired. Please sign in again.");
+        }
+        const detail = data?.detail || data?.message || `Request failed (${response.status})`;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return data;
+    }
+
+    function showLogin(note = "") {
+      $("loginView").classList.remove("hidden");
+      $("dashboardView").classList.add("hidden");
+      $("logoutBtn").classList.add("hidden");
+      if (note) message(note, "info");
+    }
+
+    function showDashboard(user) {
+      $("loginView").classList.add("hidden");
+      $("dashboardView").classList.remove("hidden");
+      $("logoutBtn").classList.remove("hidden");
+      const label = user?.name || user?.company_name || user?.email;
+      $("welcomeHeading").textContent = label ? `Welcome, ${label}` : "Contractor dashboard";
+      message("");
+      loadOpportunities();
+      loadJobs();
+    }
+
+    function pretty(value) {
+      return String(value ?? "—").replaceAll("_", " ");
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      return node;
+    }
+
+    function actionButton(text, cls, callback) {
+      const button = el("button", `btn ${cls || ""}`, text);
+      button.type = "button";
+      button.addEventListener("click", callback);
+      return button;
+    }
+
+    function renderEmpty(container, text) {
+      container.replaceChildren(el("p", "empty", text));
+    }
+
+
+async function openOpportunityDetails(opportunityId) {
+  let dialog = $("opportunityDetailDialog");
+
+  if (!dialog) {
+    dialog = el("dialog");
+    dialog.id = "opportunityDetailDialog";
+    dialog.className = "photo-viewer";
+
+    const header = el("div", "between");
+    const heading = el("h2", "", "Opportunity details");
+    const close = el("button", "btn secondary", "Close");
+    close.type = "button";
+    close.addEventListener("click", () => dialog.close());
+
+    const content = el("div");
+    content.id = "opportunityDetailContent";
+
+    header.append(heading, close);
+    dialog.append(header, content);
+
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    document.body.append(dialog);
+  }
+
+  const content = $("opportunityDetailContent");
+  content.replaceChildren(el("p", "muted", "Loading opportunity details…"));
+
+  if (!dialog.open) dialog.showModal();
+
+  try {
+    const item = await request(
+      `/contractor/opportunities/${encodeURIComponent(opportunityId)}`
+    );
+
+    content.replaceChildren();
+
+    const fields = [
+      ["EMG Lead ID", item.lead_id],
+      ["Opportunity ID", item.opportunity_id],
+      ["Service", pretty(item.service_type)],
+      ["ZIP code", item.zip_code],
+      ["Description", item.description || "No description provided."],
+      ["Opportunity status", pretty(item.status)],
+      ["Match score", item.match_score == null ? "Unavailable" : `${item.match_score}%`],
+      ["Requested bids", item.requested_bid_count],
+      ["Received", item.sent_at ? new Date(item.sent_at).toLocaleString() : "Unavailable"],
+      ["Expires", item.expires_at ? new Date(item.expires_at).toLocaleString() : "No expiration listed"],
+      ["Expiration paused", item.expiration_paused ? "Yes" : "No"]
+    ];
+
+    for (const [label, value] of fields) {
+      const row = el("p");
+      const strong = el("strong", "", `${label}: `);
+      row.append(strong, document.createTextNode(String(value ?? "Unavailable")));
+      content.append(row);
+    }
+
+    const photoHeading = el("h3", "", "Homeowner photos");
+    content.append(photoHeading);
+
+    const gallery = el("div", "photo-gallery");
+    content.append(gallery);
+
+    await loadPhotoGallery(
+      gallery,
+      `/contractor/opportunities/${encodeURIComponent(item.opportunity_id)}/photos`
+    );
+
+    if (!gallery.isConnected) {
+      content.append(el("p", "muted", "No photos are attached to this request."));
+    }
+  } catch (error) {
+    content.replaceChildren(el("p", "notice error", error.message));
+  }
+}
+
+async function openJobDetails(jobId) {
+  let dialog = $("jobDetailDialog");
+
+  if (!dialog) {
+    dialog = el("dialog");
+    dialog.id = "jobDetailDialog";
+    dialog.className = "photo-viewer";
+
+    const header = el("div", "between");
+    const heading = el("h2", "", "Job details");
+    const close = el("button", "btn secondary", "Close");
+    close.type = "button";
+    close.addEventListener("click", () => dialog.close());
+
+    const content = el("div");
+    content.id = "jobDetailContent";
+
+    header.append(heading, close);
+    dialog.append(header, content);
+
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    document.body.append(dialog);
+  }
+
+  const content = $("jobDetailContent");
+  content.replaceChildren(el("p", "muted", "Loading job details…"));
+
+  if (!dialog.open) dialog.showModal();
+
+  try {
+    const jobs = await request("/contractor/jobs");
+    const items = Array.isArray(jobs)
+      ? jobs
+      : (jobs?.items || jobs?.jobs || []);
+
+    const job = items.find(item => item.job_id === jobId);
+
+    if (!job) {
+      throw new Error("Job not found. Refresh My Jobs and try again.");
+    }
+
+    content.replaceChildren();
+    content.append(createHomeownerContact(job));
+
+    const fields = [
+      ["Job ID", job.job_id],
+      ["Service", pretty(job.service_type)],
+      ["ZIP code", job.zip_code],
+      ["Status", pretty(job.status)],
+      ["Description", job.description || "No description provided."],
+      [
+        "Quoted amount",
+        job.quoted_amount == null
+          ? "Not provided"
+          : `$${Number(job.quoted_amount).toFixed(2)}`
+      ],
+      [
+        "Created",
+        job.created_at
+          ? new Date(job.created_at).toLocaleString()
+          : "Unavailable"
+      ],
+      [
+        "Last updated",
+        job.updated_at
+          ? new Date(job.updated_at).toLocaleString()
+          : "Unavailable"
+      ]
+    ];
+
+    for (const [label, value] of fields) {
+      const row = el("p");
+      row.append(
+        el("strong", "", `${label}: `),
+        document.createTextNode(String(value ?? "Unavailable"))
+      );
+      content.append(row);
+    }
+
+    content.append(el("h3", "", "Homeowner photos"));
+
+    const gallery = el("div", "photo-gallery");
+    content.append(gallery);
+
+    await loadPhotoGallery(
+      gallery,
+      `/contractor/jobs/${encodeURIComponent(job.job_id)}/photos`
+    );
+  } catch (error) {
+    content.replaceChildren(el("p", "notice error", error.message));
+  }
+}
+
+function createHomeownerContact(job) {
+  const section = el("div", "homeowner-contact");
+  section.append(el("h3", "", "Homeowner Contact"));
+
+  section.append(
+    el("p", "", `Name: ${job.customer_name || "Unavailable"}`)
+  );
+
+  const phoneRow = el("p");
+  phoneRow.append(el("strong", "", "Phone: "));
+
+  if (job.customer_phone) {
+    const phoneLink = el("a", "", `☎ ${job.customer_phone}`);
+    phoneLink.href = `tel:${job.customer_phone.replace(/[^\d+]/g, "")}`;
+    phoneLink.setAttribute("aria-label", `Call homeowner at ${job.customer_phone}`);
+    phoneRow.append(phoneLink);
+  } else {
+    phoneRow.append(document.createTextNode("Unavailable"));
+  }
+
+  section.append(phoneRow);
+
+  const emailRow = el("p");
+  emailRow.append(el("strong", "", "Email: "));
+
+  if (job.customer_email) {
+    const emailLink = el("a", "", job.customer_email);
+    emailLink.href = `mailto:${job.customer_email}`;
+    emailRow.append(emailLink);
+  } else {
+    emailRow.append(document.createTextNode("Not provided"));
+  }
+
+  section.append(emailRow);
+  return section;
+}
+
+function openPhotoViewer(photo) {
+  let dialog = $("photoViewer");
+
+  if (!dialog) {
+    dialog = el("dialog", "photo-viewer");
+    dialog.id = "photoViewer";
+
+    const header = el("div", "photo-viewer-header");
+    const caption = el("p", "", "");
+    caption.id = "photoViewerCaption";
+
+    const close = el("button", "photo-viewer-close", "Close");
+    close.type = "button";
+    close.addEventListener("click", () => dialog.close());
+
+    const image = el("img");
+    image.id = "photoViewerImage";
+    image.alt = "";
+
+    header.append(caption, close);
+    dialog.append(header, image);
+
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    dialog.addEventListener("close", () => {
+      $("photoViewerImage").removeAttribute("src");
+    });
+
+    document.body.append(dialog);
+  }
+
+  $("photoViewerCaption").textContent = photo.filename || "Photo";
+  $("photoViewerImage").alt = photo.filename || "Full-size photo";
+  $("photoViewerImage").src = photo.url;
+
+  if (!dialog.open) dialog.showModal();
+}
+
+async function loadPhotoGallery(container, endpoint) {
+  container.className = "photo-gallery";
+  container.setAttribute("aria-label", "Attached photos");
+
+  try {
+    const data = await request(endpoint);
+    const photos = Array.isArray(data) ? data : [];
+
+    if (!photos.length) {
+      container.remove();
+      return;
+    }
+
+    container.replaceChildren();
+
+    for (const photo of photos) {
+      const button = el("button", "photo-thumb");
+      button.type = "button";
+      button.title = `View ${photo.filename || "photo"}`;
+      button.setAttribute(
+        "aria-label",
+        `View photo: ${photo.filename || "unnamed photo"}`
+      );
+
+      const image = el("img");
+      image.src = photo.url;
+      image.alt = photo.filename || "Attached photo";
+      image.loading = "lazy";
+
+      image.addEventListener("error", () => {
+        button.disabled = true;
+        button.title = "Photo could not be loaded";
+        image.alt = "Photo unavailable";
+      });
+
+      button.append(image);
+      button.addEventListener("click", () => openPhotoViewer(photo));
+      container.append(button);
+    }
+  } catch (error) {
+    container.remove();
+    console.error("Unable to load attached photos:", error);
+  }
+}
+
+    async function loadOpportunities() {
+      const list = $("opportunitiesList");
+      renderEmpty(list, "Loading opportunities…");
+      try {
+        const data = await request("/contractor/opportunities");
+        const items = Array.isArray(data) ? data : (data?.items || data?.opportunities || []);
+        list.replaceChildren();
+        if (!items.length) return renderEmpty(list, "No opportunities to display right now.");
+        for (const item of items) {
+          const card = el("article", "item");
+          const top = el("div", "between mobile-stack");
+          const title = el("h3", "", `${pretty(item.service_type)} · ${item.zip_code || "ZIP unavailable"}`);
+          top.append(title, el("span", "status", pretty(item.status)));
+          card.append(top);
+          const description = (item.description || "No description provided.").trim();
+          const descriptionPreview = description.length > 200
+            ? `${description.slice(0, 200).trimEnd()}…`
+            : description;
+
+          card.append(el("p", "", descriptionPreview));
+
+          const meta = el("p", "muted small",
+            `Opportunity: ${item.opportunity_id} · Requested bids: ${item.requested_bid_count ?? "—"}`);
+          card.append(meta);
+          if (item.expires_at) card.append(el("p", "muted small", `Expires: ${new Date(item.expires_at).toLocaleString()}`));
+          const detailsButton = actionButton(
+            "View Details",
+            "secondary",
+            () => openOpportunityDetails(item.opportunity_id)
+          );
+          card.append(detailsButton);
+          const gallery = el("div", "photo-gallery");
+            card.append(gallery);
+
+            void loadPhotoGallery(
+            gallery,
+            `/contractor/opportunities/${encodeURIComponent(item.opportunity_id)}/photos`
+            );
+          const actions = el("div", "row");
+          const accept = actionButton("Accept", "success", () => decide(item.opportunity_id, "accept", accept, decline));
+          const decline = actionButton("Decline", "danger", () => decide(item.opportunity_id, "decline", accept, decline));
+          actions.append(accept, decline);
+          card.append(actions);
+          list.append(card);
+        }
+      } catch (error) {
+        renderEmpty(list, error.message);
+      }
+    }
+
+    async function decide(id, decision, acceptButton, declineButton) {
+      if (!confirm(`Are you sure you want to ${decision} this opportunity?`)) return;
+      acceptButton.disabled = declineButton.disabled = true;
+      try {
+        const result = await request(`/opportunities/${encodeURIComponent(id)}/respond`, {
+          method: "POST",
+          body: JSON.stringify({ decision })
+        });
+        message(result?.message || `Opportunity ${decision}ed.`, "good");
+        await loadOpportunities();
+        if (decision === "accept") await loadJobs();
+      } catch (error) {
+        message(error.message, "error");
+        acceptButton.disabled = declineButton.disabled = false;
+      }
+    }
+
+    async function loadJobs() {
+      const list = $("jobsList");
+      renderEmpty(list, "Loading jobs…");
+      try {
+        const data = await request("/contractor/jobs");
+        jobsCache = Array.isArray(data) ? data : (data?.items || data?.jobs || []);
+        list.replaceChildren();
+        if (!jobsCache.length) {
+          renderEmpty(list, "No jobs are assigned to your account yet.");
+        } else {
+          for (const job of jobsCache) list.append(renderJob(job));
+        }
+        populateJobSelectors();
+      } catch (error) {
+        renderEmpty(list, error.message);
+      }
+    }
+
+    function renderJob(job) {
+      const card = el("article", "item");
+      const top = el("div", "between mobile-stack");
+      top.append(el("h3", "", `${pretty(job.service_type)} · ${job.zip_code || "ZIP unavailable"}`));
+      top.append(el("span", "status", pretty(job.status)));
+      card.append(top);
+      card.append(createHomeownerContact(job));
+      const description = (job.description || "No description provided.").trim();
+      const descriptionPreview = description.length > 200
+        ? `${description.slice(0, 200).trimEnd()}…`
+        : description;
+      card.append(el("p", "", descriptionPreview));
+      
+      card.append(el("p", "muted small",
+        `Job ID: ${job.job_id} · Updated: ${job.updated_at ? new Date(job.updated_at).toLocaleString() : "—"}`));
+
+      if (job.quoted_amount != null) {
+        card.append(el("p", "", `Quoted amount: $${Number(job.quoted_amount).toFixed(2)}`));
+      }
+
+      const detailsButton = actionButton(
+        "View Details",
+        "secondary",
+        () => openJobDetails(job.job_id)
+      );
+      card.append(detailsButton);
+
+      const gallery = el("div", "photo-gallery");
+
+      card.append(gallery);
+
+      void loadPhotoGallery(
+        gallery,
+        `/contractor/jobs/${encodeURIComponent(job.job_id)}/photos`
+      );
+
+      const form = el("form", "row");
+      const select = el("select");
+      select.setAttribute("aria-label", "New job status");
+      const statuses = [
+        ["QUOTE_IN_PROGRESS", "Quote in progress"],
+        ["BID_WON", "Bid won"],
+        ["BID_LOST", "Bid lost"],
+        ["JOB_IN_PROGRESS", "Job in progress"],
+        ["JOB_COMPLETED", "Job completed"],
+        ["PAYMENT_RECEIVED", "Payment received"]
+      ];
+      for (const [value, label] of statuses) {
+        const option = el("option", "", label);
+        option.value = value;
+        option.selected = value === job.status;
+        select.append(option);
+      }
+      const save = el("button", "btn", "Update status");
+      save.type = "submit";
+      form.append(select, save);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        save.disabled = true;
+        try {
+          await request(`/jobs/${encodeURIComponent(job.job_id)}/status`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: select.value })
+          });
+          message("Job status updated.", "good");
+          await loadJobs();
+        } catch (error) {
+          message(error.message, "error");
+        } finally {
+          save.disabled = false;
+        }
+      });
+      card.append(form);
+      return card;
+    }
+
+    function populateJobSelectors() {
+      for (const id of ["collectionJob", "agreementJob"]) {
+        const select = $(id);
+        const oldValue = select.value;
+        select.replaceChildren();
+        select.append(new Option("Choose a job…", ""));
+        for (const job of jobsCache) {
+          select.append(new Option(`${pretty(job.status)} · ${job.job_id}`, job.job_id));
+        }
+        if (jobsCache.some(job => job.job_id === oldValue)) select.value = oldValue;
+      }
+    }
+
+    $("loginForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      button.disabled = true;
+      message("Signing in…");
+      try {
+        const result = await request("/contractor-auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            email: $("email").value.trim(),
+            password: $("password").value
+          })
+        });
+        $("password").value = "";
+        showDashboard(result?.contractor || result?.user || result);
+      } catch (error) {
+        message(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("logoutBtn").addEventListener("click", async () => {
+      try {
+        await request("/contractor-auth/logout", { method: "POST" });
+      } catch (error) {
+        message(error.message, "error");
+      }
+      showLogin("You have been signed out.");
+    });
+
+    function showProfileStatus(text, kind = "info") {
+      const box = $("profileStatus");
+      box.textContent = text;
+      box.className = `notice ${kind}`;
+    }
+
+    function parseProfileList(value) {
+      return [...new Set(
+        value
+          .split(/[,\n]/)
+          .map(item => item.trim())
+          .filter(Boolean)
+      )];
+    }
+
+    async function loadMatchingProfile() {
+      const button = $("reloadProfileBtn");
+      button.disabled = true;
+
+      try {
+        const profile = await request("/contractor/profile");
+        $("profileZipCodes").value = profile.service_area.join("\n");
+        $("profileSpecialties").value = profile.specialties.join("\n");
+        showProfileStatus(
+          `Profile loaded. Account status: ${profile.status}; availability: ${profile.availability}.`,
+          "info"
+        );
+      } catch (error) {
+        showProfileStatus(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    $("reloadProfileBtn").addEventListener("click", loadMatchingProfile);
+
+    $("profileForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const button = $("saveProfileBtn");
+      const zipCodes = parseProfileList($("profileZipCodes").value);
+      const specialties = parseProfileList($("profileSpecialties").value);
+
+      if (!zipCodes.length || !specialties.length) {
+        showProfileStatus(
+          "Enter at least one ZIP code and one specialty.",
+          "error"
+        );
+        return;
+      }
+
+      button.disabled = true;
+
+      try {
+        const result = await request("/contractor/profile", {
+          method: "PUT",
+          body: JSON.stringify({
+            service_area: zipCodes,
+            specialties: specialties
+          })
+        });
+
+        $("profileZipCodes").value = result.service_area.join("\n");
+        $("profileSpecialties").value = result.specialties.join("\n");
+
+        showProfileStatus(
+          `Matching profile saved. Account status: ${result.status}; availability: ${result.availability}.`,
+          "good"
+        );
+        message("Matching profile updated.", "good");
+      } catch (error) {
+        showProfileStatus(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("refreshOpportunities").addEventListener("click", loadOpportunities);
+    $("refreshJobs").addEventListener("click", loadJobs);
+
+    document.querySelectorAll(".tab").forEach(button => {
+        button.addEventListener("click", () => {
+            document.querySelectorAll(".tab").forEach(tab =>
+                tab.classList.toggle("active", tab === button)
+            );
+
+            document.querySelectorAll('[id^="panel-"]').forEach(panel =>
+                panel.classList.add("hidden")
+            );
+
+            $(`panel-${button.dataset.tab}`).classList.remove("hidden");
+
+            // NEW: Load the contractor's saved matching profile when its tab opens.
+            if (button.dataset.tab === "profile") {
+                loadMatchingProfile();
+            }
+            message("");
+        });
+    });
+
+    $("collectionDate").value = new Date().toISOString().slice(0, 10);
+    $("collectionForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      button.disabled = true;
+      try {
+        const jobId = $("collectionJob").value;
+        await request(`/contractor/jobs/${encodeURIComponent(jobId)}/collections`, {
+          method: "POST",
+          body: JSON.stringify({
+            amount: Number($("collectionAmount").value),
+            collected_at: new Date(`${$("collectionDate").value}T12:00:00`).toISOString()
+          })
+        });
+        message("Collection report submitted.", "good");
+        $("collectionAmount").value = "";
+      } catch (error) {
+        message(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("loadAgreement").addEventListener("click", async () => {
+      const jobId = $("agreementJob").value;
+      if (!jobId) return message("Choose a job first.", "error");
+      const resultBox = $("agreementResult");
+      resultBox.textContent = "Loading agreement…";
+      try {
+        const data = await request(`/contractor/jobs/${encodeURIComponent(jobId)}/payment-agreement`);
+        resultBox.replaceChildren(el("pre", "small", JSON.stringify(data, null, 2)));
+        resultBox.firstChild.style.whiteSpace = "pre-wrap";
+        resultBox.firstChild.style.overflowWrap = "anywhere";
+      } catch (error) {
+        resultBox.textContent = error.message;
+      }
+    });
+
+    $("agreementForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      const jobId = $("agreementJob").value;
+      if (!jobId) return message("Choose a job first.", "error");
+      const body = {
+        arrangement_type: $("arrangementType").value.trim(),
+        invoice_total: Number($("invoiceTotal").value),
+        schedule_type: $("scheduleType").value.trim() || null,
+        installment_amount: $("installmentAmount").value ? Number($("installmentAmount").value) : null,
+        final_installment_amount: $("finalInstallmentAmount").value ? Number($("finalInstallmentAmount").value) : null,
+        plan_start_date: $("planStartDate").value || null,
+        final_due_date: $("finalDueDate").value || null,
+        custom_schedule: null
+      };
+      if ($("customSchedule").value.trim()) {
+        try { body.custom_schedule = JSON.parse($("customSchedule").value); }
+        catch { return message("Custom schedule must be valid JSON.", "error"); }
+      }
+      button.disabled = true;
+      try {
+        const result = await request(`/contractor/jobs/${encodeURIComponent(jobId)}/payment-agreement`, {
+          method: "POST",
+          body: JSON.stringify(body)
+        });
+        $("agreementResult").replaceChildren(el("pre", "small", JSON.stringify(result, null, 2)));
+        $("agreementResult").firstChild.style.whiteSpace = "pre-wrap";
+        message("Payment agreement created.", "good");
+      } catch (error) {
+        message(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    async function initialize() {
+      try {
+        const user = await request("/contractor-auth/me");
+        showDashboard(user?.contractor || user?.user || user);
+      } catch {
+        showLogin();
+      }
+    }
+    initialize();
+  </script>
+</body>
+</html>
