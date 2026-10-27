@@ -1,0 +1,118 @@
+
+name: EMG CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test application
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: emg_test
+          POSTGRES_USER: emg
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U emg -d emg_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://emg:ci_test_password@localhost:5432/emg_test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Install application and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+
+      - name: Initialize baseline database schema
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f app/database/schema.sql
+
+      - name: Apply database migrations
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/004_payment_tracking.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/005_payment_idempotency.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/006_login_rate_limits.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/007_login_rate_limit_reservations.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/008_homeowner_intake_fields.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/009_admin_authentication.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/010_billing_and_installments.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f app/database/migrations/001_add_must_change_password.sql
+
+      - name: Run test suite
+        run: python -m pytest -q tests
+
+  docker-build:
+    name: Validate Docker image build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build application image
+        run: docker build --tag emg-api:ci .
+
+  terraform-validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Initialize Terraform without a backend
+        run: terraform init -backend=false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
+
+      - name: Validate Terraform configuration
+        run: terraform validate
