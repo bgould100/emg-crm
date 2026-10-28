@@ -33,6 +33,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://emg:ci_test_password@localhost:5432/emg_test
+      EMG_RATE_LIMIT_SECRET: ci-only-test-secret-not-for-production
 
     steps:
       - name: Check out repository
