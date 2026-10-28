@@ -6,6 +6,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+import pytest
+
 from dotenv import load_dotenv
 
 from app.database.connection import get_connection
@@ -67,8 +69,11 @@ def test_http_admin_release_slot_creates_replacement():
     ).rstrip("/")
     origin = os.getenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000").rstrip("/")
 
-    assert username, "Set EMG_ADMIN_USERNAME in the test environment."
-    assert password, "Set EMG_ADMIN_PASSWORD in the test environment."
+    if not username or not password:
+        pytest.skip(
+            "Admin HTTP integration test requires "
+            "EMG_ADMIN_USERNAME and EMG_ADMIN_PASSWORD."
+        )
 
     # Retain the administrator's session cookie across HTTP requests.
     cookie_jar = http.cookiejar.CookieJar()
