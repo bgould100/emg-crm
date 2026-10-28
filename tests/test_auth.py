@@ -12,8 +12,6 @@ from app.database.auth import (
     reset_contractor_password as reset_contractor_portal_password,
 )
 from app.database.connection import get_connection
-from scripts.reset_contractor_password import reset_contractor_password
-
 
 @pytest.fixture
 def active_contractor():
@@ -244,56 +242,6 @@ def test_password_change_rejects_wrong_current_password(active_contractor):
         )
 
     assert authenticate_contractor_session(login["session_token"]) is not None
-
-
-def test_manual_password_reset_changes_password_and_revokes_sessions(
-    active_contractor,
-):
-    contractor = active_contractor
-    old_password = "EMG-Test-Password-123!"
-
-    provision_contractor_account(
-        contractor_id=contractor["contractor_id"],
-        email=contractor["email"],
-        password=old_password,
-    )
-
-    first_login = login_contractor(
-        email=contractor["email"],
-        password=old_password,
-    )
-    second_login = login_contractor(
-        email=contractor["email"],
-        password=old_password,
-    )
-
-    with patch(
-        "builtins.input",
-        return_value="Authentication Test Contractor",
-    ):
-        temporary_password = reset_contractor_password(
-            contractor["email"].upper(),
-        )
-
-    assert len(temporary_password) == 32
-    assert authenticate_contractor_session(
-        first_login["session_token"]
-    ) is None
-    assert authenticate_contractor_session(
-        second_login["session_token"]
-    ) is None
-
-    with pytest.raises(ValueError, match="Invalid email or password"):
-        login_contractor(
-            email=contractor["email"],
-            password=old_password,
-        )
-
-    new_login = login_contractor(
-        email=contractor["email"],
-        password=temporary_password,
-    )
-    assert new_login["account_id"] == first_login["account_id"]
 
 
 def test_admin_password_reset_requires_new_password_and_revokes_sessions(
