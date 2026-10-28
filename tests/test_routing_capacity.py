@@ -154,6 +154,16 @@ def test_five_bid_slots_are_replenished_after_declines():
                     if contractor_ids:
                         cursor.execute(
                             """
+                            DELETE FROM status_history
+                            WHERE contractor_id IN (
+                                SELECT id FROM contractors
+                                WHERE contractor_id = ANY(%s)
+                            )
+                            """,
+                            (contractor_ids,),
+                        )
+                        cursor.execute(
+                            """
                             DELETE FROM contractors
                             WHERE contractor_id = ANY(%s)
                             """,
@@ -265,6 +275,16 @@ def test_accepting_opportunity_creates_job_linked_to_that_opportunity():
                         )
 
                     if contractor_ids:
+                        cursor.execute(
+                            """
+                            DELETE FROM status_history
+                            WHERE contractor_id IN (
+                                SELECT id FROM contractors
+                                WHERE contractor_id = ANY(%s)
+                            )
+                            """,
+                            (contractor_ids,),
+                        )
                         cursor.execute(
                             """
                             DELETE FROM contractors
@@ -470,6 +490,16 @@ def test_admin_release_frees_capacity_and_preserves_accepted_job():
                         )
 
                     if contractor_ids:
+                        cursor.execute(
+                            """
+                            DELETE FROM status_history
+                            WHERE contractor_id IN (
+                                SELECT id FROM contractors
+                                WHERE contractor_id = ANY(%s)
+                            )
+                            """,
+                            (contractor_ids,),
+                        )
                         cursor.execute(
                             """
                             DELETE FROM contractors

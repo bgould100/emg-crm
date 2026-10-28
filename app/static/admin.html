@@ -237,6 +237,7 @@
 
     <nav class="section-nav" aria-label="Admin sections">
       <button class="nav-btn active" data-section="leadsSection" type="button">Homeowner leads</button>
+      <button class="nav-btn" data-section="jobsSection" type="button">Jobs</button>
       <button class="nav-btn" data-section="contractorsSection" type="button">Contractors</button>
       <button class="nav-btn" data-section="accountsSection" type="button">Portal accounts</button>
     </nav>
@@ -264,6 +265,64 @@
         </div>
       </article>
     </section>
+
+    <section id="jobsSection" class="section-view hidden">
+      <article class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Jobs</h2>
+            <p class="muted" style="font-size:13px;margin-top:4px">
+              Track contractor progress and open any job for details.
+            </p>
+          </div>
+          <button class="btn btn-small" id="refreshJobs" type="button">Reload jobs</button>
+        </div>
+        <div class="field" style="max-width:360px;margin-bottom:15px">
+          <label for="jobSearch">Search jobs</label>
+          <input id="jobSearch" type="search" placeholder="Job ID, service, contractor, homeowner, status">
+        </div>
+        <div class="table-wrap">
+          <table style="min-width:850px">
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Service</th>
+                <th>Homeowner</th>
+                <th>Contractor</th>
+                <th>Status</th>
+                <th>Last updated</th>
+              </tr>
+            </thead>
+            <tbody id="jobsBody">
+              <tr><td colspan="6" class="empty">Connect as admin to load jobs.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="jobsMessage" class="status-line" role="status"></div>
+      </article>
+    </section>
+
+    <dialog id="jobDetailsDialog" style="max-width:720px;width:calc(100% - 32px);background:var(--admin-panel);color:var(--admin-text);border:1px solid var(--admin-border);border-radius:14px;padding:24px">
+      <div class="panel-heading">
+        <h2>Job details</h2>
+        <button class="btn btn-small" id="closeJobDetails" type="button">Close</button>
+      </div>
+      <div id="jobDetailsContent"></div>
+    </dialog>
+    <dialog id="contractorDetailsDialog" style="max-width:720px;width:calc(100% - 32px);background:var(--admin-panel);color:var(--admin-text);border:1px solid var(--admin-border);border-radius:14px;padding:24px">
+      <div class="panel-heading">
+        <h2 id="contractorDetailsTitle">Contractor details</h2>
+        <button class="btn btn-small" id="closeContractorDetails" type="button">Close</button>
+      </div>
+      <div id="contractorDetailsContent"></div>
+    </dialog>
+    <dialog id="leadDetailsDialog" style="max-width:720px;width:calc(100% - 32px);background:var(--admin-panel);color:var(--admin-text);border:1px solid var(--admin-border);border-radius:14px;padding:24px">
+      <div class="panel-heading">
+        <h2>Homeowner lead details</h2>
+        <button class="btn btn-small" id="closeLeadDetails" type="button">Close</button>
+      </div>
+      <div id="leadDetailsContent"></div>
+    </dialog>
 
     <section id="contractorsSection" class="section-view hidden">
       <div class="panel-grid">
@@ -305,10 +364,56 @@
             <div class="form-grid">
               <div class="field full"><label for="accountContractor">Contractor *</label><select id="accountContractor" required><option value="">Load contractors first</option></select></div>
               <div class="field full"><label for="accountEmail">Login email *</label><input id="accountEmail" type="email" required maxlength="255" autocomplete="off"></div>
-              <div class="field full"><label for="accountPassword">Temporary password *</label><input id="accountPassword" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"><span class="muted" style="font-size:12px">Provide the password to the contractor through a secure channel. It is not displayed again after submission.</span></div>
+              <div class="field full"><label for="accountPassword">Temporary password *</label><input id="accountPassword" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"></div>
+              <div class="field full"><label for="accountPasswordConfirm">Confirm temporary password *</label><input id="accountPasswordConfirm" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"><span class="muted" style="font-size:12px">Provide the temporary password to the contractor through a secure channel. It is not displayed again after submission.</span></div>
               <div class="full"><button class="btn btn-primary" type="submit">Create portal account</button></div>
             </div>
             <div id="accountFormMessage" class="status-line" role="status"></div>
+          </form>
+        </article>
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Reset portal password</h2>
+              <p class="muted" style="font-size:13px;margin-top:4px">
+                Set a temporary password for an existing portal account.
+              </p>
+            </div>
+          </div>
+          <div class="notice info">
+            Resetting a password revokes existing sessions. The contractor must
+            choose a new password before accessing the portal again.
+          </div>
+          <form id="resetAccountForm">
+            <div class="form-grid">
+              <div class="field full">
+                <label for="resetAccountContractor">Contractor *</label>
+                <select id="resetAccountContractor" required>
+                  <option value="">Load contractors first</option>
+                </select>
+              </div>
+              <div class="field full">
+                <label for="resetAccountPassword">Temporary password *</label>
+                <input id="resetAccountPassword" type="password"
+                  required minlength="12" maxlength="1024"
+                  autocomplete="new-password">
+              </div>
+              <div class="field full">
+                <label for="resetAccountPasswordConfirm">
+                  Confirm temporary password *
+                </label>
+                <input id="resetAccountPasswordConfirm" type="password"
+                  required minlength="12" maxlength="1024"
+                  autocomplete="new-password">
+              </div>
+              <div class="full">
+                <button class="btn btn-primary" type="submit">
+                  Reset portal password
+                </button>
+              </div>
+            </div>
+            <div id="resetAccountFormMessage" class="status-line"
+              role="status" aria-live="polite"></div>
           </form>
         </article>
         <article class="panel">
@@ -335,6 +440,7 @@
 
   let leads = [];
   let contractors = [];
+  let jobs = [];
   let overview = null;
 
   const $ = (id) => document.getElementById(id);
@@ -373,8 +479,17 @@
 
   function dateLabel(value) {
     if (!value) return "—";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+
+    const timestamp = typeof value === "string"
+      && !/(Z|[+-]\d{2}:\d{2})$/i.test(value)
+      ? `${value.replace(" ", "T")}Z`
+      : value;
+
+    const date = new Date(timestamp);
+
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : date.toLocaleString();
   }
 
 
@@ -436,15 +551,289 @@
     renderLeads();
   }
 
+  async function loadJobs() {
+    jobs = await api("/admin/jobs");
+    renderJobs();
+  }
+
+  function renderJobs() {
+    const query = $("jobSearch").value.trim().toLowerCase();
+    const rows = jobs.filter((job) => [
+      job.job_id,
+      job.status,
+      job.lead_id,
+      job.zip_code,
+      job.service_type,
+      job.description,
+      job.customer_name,
+      job.customer_email,
+      job.contractor_id,
+      job.company_name,
+      job.contractor_contact_name
+    ].some((value) => String(value ?? "").toLowerCase().includes(query)));
+
+    $("jobsBody").innerHTML = rows.length ? rows.map((job) => `
+      <tr class="job-row" data-job-id="${escapeHtml(job.job_id)}" tabindex="0" role="button" aria-label="View job ${escapeHtml(job.job_id)}" style="cursor:pointer">
+        <td>
+          <div class="primary-cell">${escapeHtml(job.job_id)}</div>
+          <div class="sub-cell">${escapeHtml(job.lead_id)}</div>
+        </td>
+        <td>
+          <div class="primary-cell">${escapeHtml(job.service_type)}</div>
+          <div class="sub-cell">${escapeHtml(job.zip_code)} · ${escapeHtml(job.description)}</div>
+        </td>
+        <td>${escapeHtml(job.customer_name || "Not provided")}</td>
+        <td>
+          <div class="primary-cell">${escapeHtml(job.company_name)}</div>
+          <div class="sub-cell">${escapeHtml(job.contractor_id)}</div>
+        </td>
+        <td><span class="pill gold">${escapeHtml(job.status || "UNKNOWN")}</span></td>
+        <td>${escapeHtml(dateLabel(job.updated_at))}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="6" class="empty">No matching jobs found.</td></tr>';
+  }
+
+  function openAdminJobDetails(jobId) {
+    const job = jobs.find((item) => item.job_id === jobId);
+    if (!job) return;
+
+    const content = $("jobDetailsContent");
+    content.replaceChildren();
+
+    const fields = [
+      ["Job ID", job.job_id],
+      ["Status", job.status],
+      ["Service", job.service_type],
+      ["Description", job.description],
+      ["ZIP code", job.zip_code],
+      ["Quote", job.quoted_amount == null ? "Not set" : money(job.quoted_amount)],
+      ["Lead ID", job.lead_id],
+      ["Homeowner", job.customer_name],
+      ["Homeowner email", job.customer_email],
+      ["Homeowner phone", job.customer_phone],
+      ["Contractor", job.company_name],
+      ["Contractor contact", job.contractor_contact_name],
+      ["Contractor ID", job.contractor_id],
+      ["Created", dateLabel(job.created_at)],
+      ["Last updated", dateLabel(job.updated_at)]
+    ];
+
+    for (const [label, value] of fields) {
+      const row = document.createElement("p");
+      row.style.margin = "0 0 10px";
+
+      const heading = document.createElement("strong");
+      heading.textContent = label + ": ";
+
+      row.append(
+        heading,
+        document.createTextNode(String(value ?? "Not provided"))
+      );
+
+      content.append(row);
+    }
+    const activity = document.createElement("section");
+    activity.style.marginTop = "24px";
+    activity.innerHTML = `
+      <h3>Activity history</h3>
+      <p class="sub-cell">Loading activity...</p>
+    `;
+    content.append(activity);
+
+    fetch(`/admin/jobs/${encodeURIComponent(job.job_id)}/activity`, {
+      credentials: "same-origin",
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load activity history.");
+        return response.json();
+      })
+      .then((events) => {
+        activity.replaceChildren();
+
+        const heading = document.createElement("h3");
+        heading.textContent = "Activity history";
+        activity.append(heading);
+
+        if (!events.length) {
+          const empty = document.createElement("p");
+          empty.className = "sub-cell";
+          empty.textContent = "No recorded activity yet.";
+          activity.append(empty);
+          return;
+        }
+
+        for (const event of events) {
+          const item = document.createElement("div");
+          item.style.marginBottom = "14px";
+
+          const title = document.createElement("strong");
+          const labels = {
+            OpportunityAccepted: "Opportunity accepted",
+            JobStatusChanged: "Job status changed",
+            ContractorCreated: "Contractor created",
+            ContractorMatchingProfileUpdated: "Contractor profile updated",
+          };
+          title.textContent = labels[event.event_type] || event.event_type;
+
+          const detail = document.createElement("div");
+          detail.className = "sub-cell";
+          detail.textContent = event.previous_status && event.new_status
+            ? `${event.previous_status} → ${event.new_status}`
+            : event.new_status || "";
+
+          const timestamp = document.createElement("div");
+          timestamp.className = "sub-cell";
+          timestamp.textContent = dateLabel(event.created_at);
+
+          item.append(title, detail, timestamp);
+          activity.append(item);
+        }
+      })
+      .catch(() => {
+        activity.replaceChildren();
+        const message = document.createElement("p");
+        message.className = "sub-cell";
+        message.textContent = "Activity history could not be loaded.";
+        activity.append(message);
+      });
+
+    $("jobDetailsDialog").showModal();
+    void loadAdminJobPhotos(job.job_id, content);
+  }
+
+  async function loadAdminJobPhotos(jobId, container) {
+    const section = document.createElement("section");
+    section.style.marginTop = "24px";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Job photos";
+    section.append(heading);
+
+    const message = document.createElement("p");
+    message.textContent = "Loading photos…";
+    section.append(message);
+    container.append(section);
+
+    try {
+      const photos = await api(
+        `/admin/jobs/${encodeURIComponent(jobId)}/photos`
+      );
+
+      if (!Array.isArray(photos) || photos.length === 0) {
+        message.textContent = "No photos attached to this job.";
+        return;
+      }
+
+      message.remove();
+
+      const gallery = document.createElement("div");
+      gallery.style.display = "grid";
+      gallery.style.gridTemplateColumns =
+        "repeat(auto-fill, minmax(120px, 1fr))";
+      gallery.style.gap = "12px";
+
+      for (const photo of photos) {
+        const link = document.createElement("a");
+        link.href = photo.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = `View ${photo.filename || "job photo"} full size`;
+
+        const image = document.createElement("img");
+        image.src = photo.url;
+        image.alt = photo.filename || "Job photo";
+        image.loading = "lazy";
+        image.style.width = "100%";
+        image.style.height = "120px";
+        image.style.objectFit = "cover";
+        image.style.borderRadius = "8px";
+        image.style.border = "1px solid var(--admin-border)";
+
+        link.append(image);
+        gallery.append(link);
+      }
+
+      section.append(gallery);
+    } catch (error) {
+      message.textContent = `Could not load photos: ${error.message}`;
+    }
+  }
+
+  async function loadAdminLeadPhotos(leadId, container) {
+    const section = document.createElement("section");
+    section.style.marginTop = "24px";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Homeowner photos";
+    section.append(heading);
+
+    const message = document.createElement("p");
+    message.textContent = "Loading photos…";
+    section.append(message);
+    container.append(section);
+
+    try {
+      const photos = await api(
+        `/admin/leads/${encodeURIComponent(leadId)}/photos`
+      );
+
+      if (!Array.isArray(photos) || photos.length === 0) {
+        message.textContent = "No homeowner photos attached to this lead.";
+        return;
+      }
+
+      message.remove();
+
+      const gallery = document.createElement("div");
+      gallery.style.display = "grid";
+      gallery.style.gridTemplateColumns =
+        "repeat(auto-fill, minmax(120px, 1fr))";
+      gallery.style.gap = "12px";
+
+      for (const photo of photos) {
+        const link = document.createElement("a");
+        link.href = photo.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = `View ${photo.filename || "homeowner photo"} full size`;
+
+        const image = document.createElement("img");
+        image.src = photo.url;
+        image.alt = photo.filename || "Homeowner photo";
+        image.loading = "lazy";
+        image.style.width = "100%";
+        image.style.height = "120px";
+        image.style.objectFit = "cover";
+        image.style.borderRadius = "8px";
+        image.style.border = "1px solid var(--admin-border)";
+
+        link.append(image);
+        gallery.append(link);
+      }
+
+      section.append(gallery);
+    } catch (error) {
+      message.textContent = `Could not load photos: ${error.message}`;
+    }
+  }
+
   function renderLeads() {
     const query = $("leadSearch").value.trim().toLowerCase();
     const rows = leads.filter((lead) => [
       lead.lead_id, lead.zip_code, lead.service_type, lead.description,
-      lead.customer_name, lead.customer_email, lead.status
+      lead.customer_name, lead.customer_email, lead.customer_phone,
+      lead.status, lead.urgency
     ].some((value) => String(value ?? "").toLowerCase().includes(query)));
 
     $("leadsBody").innerHTML = rows.length ? rows.map((lead) => `
-      <tr>
+      <tr
+        class="lead-row"
+        data-lead-id="${escapeHtml(lead.lead_id)}"
+        tabindex="0"
+        role="button"
+        aria-label="View lead ${escapeHtml(lead.lead_id)}"
+        style="cursor:pointer"
+      >
         <td><div class="primary-cell">${escapeHtml(lead.lead_id)}</div><div class="sub-cell">${escapeHtml(lead.zip_code)}</div></td>
         <td><div class="primary-cell">${escapeHtml(lead.service_type)}</div><div class="sub-cell">${escapeHtml(lead.description)}</div></td>
         <td><div class="primary-cell">${escapeHtml(lead.customer_name || "Not provided")}</div><div class="sub-cell">${escapeHtml(lead.customer_email || "")}</div><div class="sub-cell">${escapeHtml(lead.customer_phone || "")}</div></td>
@@ -456,11 +845,320 @@
     `).join("") : '<tr><td colspan="7" class="empty">No matching leads found.</td></tr>';
   }
 
+  function openAdminLeadDetails(leadId) {
+    const lead = leads.find(
+      (item) => String(item.lead_id) === String(leadId)
+    );
+    if (!lead) return;
+
+    const content = $("leadDetailsContent");
+    content.replaceChildren();
+
+    const fields = [
+      ["Lead ID", lead.lead_id],
+      ["Status", lead.status],
+      ["Service", lead.service_type],
+      ["Description", lead.description],
+      ["ZIP code", lead.zip_code],
+      ["Budget", lead.budget == null ? "Not specified" : money(lead.budget)],
+      ["Urgency", lead.urgency],
+      ["Requested bids", lead.requested_bid_count],
+      ["Homeowner", lead.customer_name],
+      ["Homeowner email", lead.customer_email],
+      ["Homeowner phone", lead.customer_phone],
+      ["Submitted", dateLabel(lead.created_at)],
+      ["Last updated", dateLabel(lead.updated_at)]
+    ];
+
+    for (const [label, value] of fields) {
+      const row = document.createElement("p");
+      row.style.margin = "0 0 10px";
+
+      const heading = document.createElement("strong");
+      heading.textContent = label + ": ";
+
+      row.append(
+        heading,
+        document.createTextNode(
+          value == null || value === "" ? "Not provided" : String(value)
+        )
+      );
+
+      content.append(row);
+    }
+
+    $("leadDetailsDialog").showModal();
+    void loadAdminLeadPhotos(lead.lead_id, content);
+  }
+
   async function loadContractors() {
     contractors = await api("/admin/contractors");
     renderContractors();
     renderContractorOptions();
+    renderResetContractorOptions();
   }
+
+
+  async function openAdminContractorDetails(contractorId) {
+    const contractor = contractors.find(
+      (item) => item.contractor_id === contractorId
+    );
+    if (!contractor) return;
+
+    const content = $("contractorDetailsContent");
+    const dialog = $("contractorDetailsDialog");
+
+    $("contractorDetailsTitle").textContent =
+      `${contractor.company_name} — Activity`;
+
+    content.replaceChildren();
+
+    const loading = document.createElement("p");
+    loading.className = "sub-cell";
+    loading.textContent = "Loading contractor activity...";
+    content.append(loading);
+
+    dialog.showModal();
+
+    function addText(parent, tag, text, className = "") {
+      const element = document.createElement(tag);
+      element.textContent = text ?? "";
+      if (className) element.className = className;
+      parent.append(element);
+      return element;
+    }
+
+    function addSectionHeading(text) {
+      const heading = document.createElement("h3");
+      heading.textContent = text;
+      heading.style.marginTop = "24px";
+      content.append(heading);
+    }
+
+    function renderEventList(events) {
+      if (!events.length) {
+        addText(content, "p", "No recorded activity.", "sub-cell");
+        return;
+      }
+
+      const labels = {
+        ContractorCreated: "Contractor profile created",
+        ContractorMatchingProfileUpdated: "Matching profile updated",
+        OpportunityCreated: "Opportunity sent to contractor",
+        OpportunityAccepted: "Opportunity accepted",
+        OpportunityDeclined: "Opportunity declined",
+        JobStatusChanged: "Job status changed",
+      };
+
+      for (const event of events) {
+        const item = document.createElement("div");
+        item.style.marginBottom = "14px";
+        item.style.paddingBottom = "12px";
+        item.style.borderBottom = "1px solid var(--admin-border)";
+
+        addText(
+          item,
+          "strong",
+          labels[event.event_type] || event.event_type
+        );
+
+        const status = event.previous_status && event.new_status
+          ? `${event.previous_status} → ${event.new_status}`
+          : event.new_status || "";
+
+        if (status) {
+          addText(item, "div", status, "sub-cell");
+        }
+
+        addText(
+          item,
+          "div",
+          dateLabel(event.created_at),
+          "sub-cell"
+        );
+
+        content.append(item);
+      }
+    }
+
+    function renderContractorActivity(data) {
+      content.replaceChildren();
+
+      addText(
+        content,
+        "p",
+        `${contractor.company_name} · ${contractor.contractor_id}`
+      );
+
+      addSectionHeading("Jobs");
+
+      if (!data.jobs.length) {
+        addText(content, "p", "No jobs recorded yet.", "sub-cell");
+      }
+
+      for (const job of data.jobs) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.style.display = "block";
+        button.style.width = "100%";
+        button.style.textAlign = "left";
+        button.style.marginBottom = "10px";
+        button.style.padding = "12px 14px";
+
+        const customer = document.createElement("div");
+        customer.className = "primary-cell";
+        customer.style.fontWeight = "700";
+        customer.textContent = job.customer_name || "Unknown customer";
+
+        const jobId = document.createElement("div");
+        jobId.className = "sub-cell";
+        jobId.textContent = job.job_id;
+
+        const status = document.createElement("div");
+        status.className = "sub-cell";
+        status.textContent = `Status: ${job.status}`;
+
+        button.append(customer, jobId, status);
+        button.addEventListener("click", () => {
+          void openContractorJobFlow(job);
+        });
+
+        content.append(button);
+      }
+
+      addSectionHeading("Unassigned Opportunities");
+
+      if (!data.unassigned_opportunities.length) {
+        addText(
+          content,
+          "p",
+          "No unassigned opportunities.",
+          "sub-cell"
+        );
+      }
+
+      for (const opportunity of data.unassigned_opportunities) {
+        const item = document.createElement("div");
+        item.style.marginBottom = "12px";
+        item.style.paddingBottom = "10px";
+        item.style.borderBottom = "1px solid var(--admin-border)";
+
+        addText(
+          item,
+          "strong",
+          opportunity.customer_name || "Unknown customer"
+        );
+        addText(
+          item,
+          "div",
+          opportunity.opportunity_id,
+          "sub-cell"
+        );
+        addText(
+          item,
+          "div",
+          `Status: ${opportunity.status}`,
+          "sub-cell"
+        );
+        addText(
+          item,
+          "div",
+          `Sent: ${dateLabel(opportunity.sent_at)}`,
+          "sub-cell"
+        );
+
+        content.append(item);
+      }
+
+      addSectionHeading("Contractor Profile Activity");
+      renderEventList(data.profile_events);
+    }
+
+    async function openContractorJobFlow(job) {
+      content.replaceChildren();
+
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "btn btn-small";
+      back.textContent = "← Back to contractor";
+      back.addEventListener("click", () => {
+        renderContractorActivity(activityData);
+      });
+      content.append(back);
+
+      addText(
+        content,
+        "h3",
+        job.customer_name || "Unknown customer"
+      );
+      addText(content, "p", job.job_id, "sub-cell");
+      addText(content, "p", `Current status: ${job.status}`, "sub-cell");
+
+      addSectionHeading("Job Flow Log");
+
+      const loadingFlow = addText(
+        content,
+        "p",
+        "Loading job history...",
+        "sub-cell"
+      );
+
+      try {
+        const response = await fetch(
+          `/admin/jobs/${encodeURIComponent(job.job_id)}/activity`,
+          { credentials: "same-origin" }
+        );
+
+        if (!response.ok) {
+          throw new Error("Could not load job activity.");
+        }
+
+        const events = await response.json();
+        loadingFlow.remove();
+
+        if (!events.length) {
+          addText(
+            content,
+            "p",
+            "No recorded events for this job yet.",
+            "sub-cell"
+          );
+          return;
+        }
+
+        renderEventList(events);
+      } catch {
+        loadingFlow.textContent =
+          "Job activity could not be loaded. Please try again.";
+      }
+    }
+
+    let activityData;
+
+    try {
+      const response = await fetch(
+        `/admin/contractors/${encodeURIComponent(contractorId)}/activity`,
+        { credentials: "same-origin" }
+      );
+
+      if (!response.ok) {
+        throw new Error("Could not load contractor activity.");
+      }
+
+      activityData = await response.json();
+      renderContractorActivity(activityData);
+    } catch {
+      content.replaceChildren();
+      addText(
+        content,
+        "p",
+        "Contractor activity could not be loaded.",
+        "sub-cell"
+      );
+    }
+  }
+
 
   function renderContractors() {
     const query = $("contractorSearch").value.trim().toLowerCase();
@@ -471,7 +1169,7 @@
     ].some((value) => String(value ?? "").toLowerCase().includes(query)));
 
     $("contractorsBody").innerHTML = rows.length ? rows.map((contractor) => `
-      <tr>
+      <tr class="contractor-row" data-contractor-id="${escapeHtml(contractor.contractor_id)}" style="cursor:pointer">
         <td><div class="primary-cell">${escapeHtml(contractor.company_name)}</div><div class="sub-cell">${escapeHtml(contractor.contractor_id)}</div><div class="sub-cell">${escapeHtml(contractor.email)}</div></td>
         <td><div>${escapeHtml((contractor.service_area || []).join(", "))}</div><div class="sub-cell">${escapeHtml((contractor.specialties || []).join(", "))}</div></td>
         <td><span class="pill ${contractor.status === "ACTIVE" ? "green" : "red"}">${escapeHtml(contractor.status || "UNKNOWN")}</span><div class="sub-cell">${escapeHtml(contractor.availability || "")}</div></td>
@@ -489,11 +1187,29 @@
     if (contractors.some((c) => c.contractor_id === previous)) select.value = previous;
   }
 
+  function renderResetContractorOptions() {
+    const select = $("resetAccountContractor");
+    const previous = select.value;
+    const eligible = contractors.filter(
+      (contractor) => contractor.has_login && contractor.status === "ACTIVE"
+    );
+
+    select.innerHTML = '<option value="">Choose a contractor</option>' +
+      eligible.map((contractor) =>
+        `<option value="${escapeHtml(contractor.contractor_id)}">${escapeHtml(contractor.company_name)} · ${escapeHtml(contractor.contractor_id)}</option>`
+      ).join("");
+
+    if (eligible.some((contractor) => contractor.contractor_id === previous)) {
+      select.value = previous;
+    }
+  }
+
+
   async function refreshAll() {
     $("refreshTop").disabled = true;
 
     try {
-      await Promise.all([loadOverview(), loadLeads(), loadContractors()]);
+      await Promise.all([loadOverview(), loadLeads(), loadContractors(), loadJobs()]);
       setConnected(true, "Authenticated with a secure administrator session.");
       $("lastUpdated").textContent = "Updated " + new Date().toLocaleTimeString();
       $("globalMessage").classList.add("hidden");
@@ -507,6 +1223,7 @@
   function clearDashboardData() {
     leads = [];
     contractors = [];
+    jobs = [];
     overview = null;
 
     ["metricLeads", "metricContractors", "metricOpportunities", "metricJobs", "metricFees"]
@@ -518,9 +1235,13 @@
     $("contractorsBody").innerHTML =
       '<tr><td colspan="4" class="empty">Sign in to load contractors.</td></tr>';
 
+    $("jobsBody").innerHTML =
+      '<tr><td colspan="6" class="empty">Sign in to load jobs.</td></tr>';
+
+    $("jobsMessage").textContent = "";
+
     renderContractorOptions();
   }
-
 
   $("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -564,6 +1285,36 @@
   $("disconnectBtn").addEventListener("click", logoutAdmin);
   $("refreshTop").addEventListener("click", refreshAll);
 
+  $("refreshJobs").addEventListener("click", async () => {
+    try {
+      await loadJobs();
+      globalMessage("Jobs refreshed.", "success");
+    } catch (error) {
+      globalMessage(error.message, "error");
+    }
+  });
+
+  $("jobSearch").addEventListener("input", renderJobs);
+
+  $("jobsBody").addEventListener("click", (event) => {
+    const row = event.target.closest("tr.job-row");
+    if (row) openAdminJobDetails(row.dataset.jobId);
+  });
+
+  $("jobsBody").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+
+    const row = event.target.closest("tr.job-row");
+    if (!row) return;
+
+    event.preventDefault();
+    openAdminJobDetails(row.dataset.jobId);
+  });
+
+  $("closeJobDetails").addEventListener("click", () => {
+    $("jobDetailsDialog").close();
+  });
+
   $("refreshLeads").addEventListener("click", async () => {
     try { await loadLeads(); showMessage("globalMessage", "Leads refreshed.", "success"); }
     catch (error) { globalMessage(error.message, "error"); }
@@ -574,7 +1325,37 @@
   });
 
   $("leadSearch").addEventListener("input", renderLeads);
+
+  $("leadsBody").addEventListener("click", (event) => {
+    const row = event.target.closest("tr.lead-row");
+    if (row) openAdminLeadDetails(row.dataset.leadId);
+  });
+
+  $("leadsBody").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+
+    const row = event.target.closest("tr.lead-row");
+    if (!row) return;
+
+    event.preventDefault();
+    openAdminLeadDetails(row.dataset.leadId);
+  });
+
+  $("closeLeadDetails").addEventListener("click", () => {
+    $("leadDetailsDialog").close();
+  });
+
   $("contractorSearch").addEventListener("input", renderContractors);
+  $("contractorsBody").addEventListener("click", (event) => {
+    const row = event.target.closest("tr.contractor-row");
+    if (row) {
+      void openAdminContractorDetails(row.dataset.contractorId);
+    }
+  });
+
+  $("closeContractorDetails").addEventListener("click", () => {
+    $("contractorDetailsDialog").close();
+  });
 
   document.querySelectorAll(".nav-btn").forEach((button) => {
     button.addEventListener("click", () => {
@@ -618,24 +1399,89 @@
     if (option && option.dataset.email) $("accountEmail").value = option.dataset.email;
   });
 
+
   $("accountForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("accountFormMessage");
     const passwordInput = $("accountPassword");
     message.textContent = "Provisioning contractor account…";
+
     try {
       const payload = {
         contractor_id: $("accountContractor").value,
         email: $("accountEmail").value.trim(),
-        password: passwordInput.value
+        password: passwordInput.value,
+        confirm_password: $("accountPasswordConfirm").value
       };
-      if (!payload.contractor_id) throw new Error("Choose a contractor first.");
-      if (payload.password.length < 12) throw new Error("Password must be at least 12 characters.");
-      await api("/admin/contractor-accounts", { method: "POST", body: JSON.stringify(payload) });
+
+      if (!payload.contractor_id) {
+        throw new Error("Choose a contractor first.");
+      }
+      if (payload.password.length < 12) {
+        throw new Error("Password must be at least 12 characters.");
+      }
+      if (payload.password !== payload.confirm_password) {
+        throw new Error("Passwords do not match.");
+      }
+
+      await api("/admin/contractor-accounts", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+
       passwordInput.value = "";
-      message.textContent = "Contractor account created. Deliver the credentials privately.";
+      $("accountPasswordConfirm").value = "";
+
+      message.textContent =
+        "Contractor account created. Deliver the credentials privately.";
       message.style.color = "var(--admin-green)";
       await loadContractors();
+    } catch (error) {
+      message.textContent = error.message;
+      message.style.color = "var(--admin-red)";
+    }
+  });
+
+  $("resetAccountForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const message = $("resetAccountFormMessage");
+    const passwordInput = $("resetAccountPassword");
+    const confirmInput = $("resetAccountPasswordConfirm");
+    const contractorId = $("resetAccountContractor").value;
+
+    message.textContent = "Resetting contractor password…";
+
+    try {
+      if (!contractorId) {
+        throw new Error("Choose a contractor first.");
+      }
+
+      if (passwordInput.value.length < 12) {
+        throw new Error("Temporary password must be at least 12 characters.");
+      }
+
+      if (passwordInput.value !== confirmInput.value) {
+        throw new Error("Passwords do not match.");
+      }
+
+      await api(
+        `/admin/contractor-accounts/${encodeURIComponent(contractorId)}/reset-password`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            temporary_password: passwordInput.value,
+            confirm_password: confirmInput.value
+          })
+        }
+      );
+
+      passwordInput.value = "";
+      confirmInput.value = "";
+
+      message.textContent =
+        "Temporary password set. Existing sessions were revoked. The contractor must change the password at next login.";
+      message.style.color = "var(--admin-green)";
     } catch (error) {
       message.textContent = error.message;
       message.style.color = "var(--admin-red)";

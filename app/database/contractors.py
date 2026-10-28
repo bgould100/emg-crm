@@ -41,7 +41,7 @@ def create_contractor(
             specialties,
             availability
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, 'AVAILABLE')
+        VALUES (%s, %s, %s::varchar, %s, %s, %s, %s, 'AVAILABLE')
         RETURNING *
     """
 
@@ -55,10 +55,33 @@ def create_contractor(
         ",".join(item.strip() for item in specialties if item.strip()),
     )
 
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(query, values)
             contractor = cursor.fetchone()
+
+            cursor.execute(
+                """
+                INSERT INTO status_history (
+                    contractor_id,
+                    event_type,
+                    new_status,
+                    metadata
+                )
+                VALUES (
+                    %s,
+                    'ContractorCreated',
+                    %s,
+                    jsonb_build_object('company_name', %s::text)
+                )
+                """,
+                (
+                    contractor["id"],
+                    contractor["status"],
+                    contractor["company_name"],
+                ),
+            )
 
     return contractor
 
@@ -129,6 +152,8 @@ def update_contractor_matching_profile(
                   specialties, availability, status
     """
 
+
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -141,7 +166,30 @@ def update_contractor_matching_profile(
             )
             contractor = cursor.fetchone()
 
-    if contractor is None:
-        raise LookupError("Contractor profile not found.")
+            if contractor is None:
+                raise LookupError("Contractor profile not found.")
+
+            cursor.execute(
+                """
+                INSERT INTO status_history (
+                    contractor_id,
+                    event_type,
+                    metadata
+                )
+                VALUES (
+                    %s,
+                    'ContractorMatchingProfileUpdated',
+                    jsonb_build_object(
+                        'service_area', %s,
+                        'specialties', %s
+                    )
+                )
+                """,
+                (
+                    contractor_pk,
+                    contractor["service_area"],
+                    contractor["specialties"],
+                ),
+            )
 
     return contractor

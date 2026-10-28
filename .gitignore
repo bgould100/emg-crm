@@ -22,3 +22,12 @@ openapi.json
 *.backup*
 *.admin-backup
 *.static-backup
+
+# Local password recovery tools
+/Reset-AdminPassword.ps1
+/scripts/reset_contractor_password.py
+
+# Local Terraform learning files and state
+/terraform-learning/
+*.tfstate
+*.tfstate.*

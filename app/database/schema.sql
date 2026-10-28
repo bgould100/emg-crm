@@ -152,6 +152,7 @@ CREATE TABLE contractor_accounts (
         REFERENCES contractors(id),
     email VARCHAR(255) NOT NULL,
     password_hash TEXT NOT NULL,
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
         CHECK (status IN ('ACTIVE', 'DISABLED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

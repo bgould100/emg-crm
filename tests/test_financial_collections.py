@@ -41,7 +41,7 @@ def financial_job(monkeypatch):
     try:
         lead = create_lead(
             zip_code="83814",
-            service_type="Roofing",
+            service_type=f"Financial Test {suffix}",
             description=f"Temporary financial endpoint test {suffix}",
             requested_bid_count=1,
             customer_name=f"Financial Test {suffix}",
@@ -53,7 +53,7 @@ def financial_job(monkeypatch):
             company_name=f"EMG Financial Test {suffix}",
             email=email,
             service_area=["83814"],
-            specialties=["Roofing"],
+            specialties=[f"Financial Test {suffix}"],
         )
         contractor_id = contractor["contractor_id"]
 
@@ -178,6 +178,15 @@ def financial_job(monkeypatch):
                         (db_lead_id,),
                     )
                     cursor.execute(
+                        """
+                        DELETE FROM status_history
+                        WHERE opportunity_id IN (
+                            SELECT id FROM opportunities WHERE lead_id = %s
+                        )
+                        """,
+                        (db_lead_id,),
+                    )
+                    cursor.execute(
                         "DELETE FROM opportunities WHERE lead_id = %s",
                         (db_lead_id,),
                     )
@@ -199,6 +208,10 @@ def financial_job(monkeypatch):
                     )
                     cursor.execute(
                         "DELETE FROM contractor_accounts WHERE contractor_id = %s",
+                        (db_contractor_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM status_history WHERE contractor_id = %s",
                         (db_contractor_id,),
                     )
                     cursor.execute(
@@ -469,6 +482,10 @@ def test_contractor_cannot_report_collection_for_another_contractors_job(
                     )
                     cursor.execute(
                         "DELETE FROM contractor_accounts WHERE contractor_id = %s",
+                        (other_contractor_pk,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM status_history WHERE contractor_id = %s",
                         (other_contractor_pk,),
                     )
                     cursor.execute(

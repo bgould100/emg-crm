@@ -8,13 +8,16 @@ import re
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.database.auth import (
     authenticate_contractor_session,
+    change_contractor_password,
     login_contractor,
     logout_contractor,
     provision_contractor_account,
+    complete_required_password_change,
+    reset_contractor_password,
 )
 from app.database.admin_auth import (
     authenticate_admin_session,
@@ -80,11 +83,114 @@ def normalize_us_phone(phone: str) -> str:
         )
 
     return digits
+
+class HomeownerRequestBodyLimitMiddleware:
+    """Limit the total body size of homeowner form submissions."""
+    def __init__(self, app):
+        self.app = app
+    MAX_BODY_SIZE = 30 * 1024 * 1024
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] != "/homeowner/submit"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_length = next(
+            (
+                value
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"content-length"
+            ),
+            None,
+        )
+
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                await self._reject(send, 400, "Invalid Content-Length header.")
+                return
+
+            if declared_size < 0:
+                await self._reject(send, 400, "Invalid Content-Length header.")
+                return
+
+            if declared_size > self.MAX_BODY_SIZE:
+                await self._reject(send, 413, "Submission is too large. Reduce the total upload size to 30 MiB or less.")
+                return
+
+        chunks = []
+        total_size = 0
+
+        while True:
+            message = await receive()
+
+            if message["type"] == "http.disconnect":
+                return
+
+            if message["type"] != "http.request":
+                continue
+
+            chunk = message.get("body", b"")
+            total_size += len(chunk)
+
+            if total_size > self.MAX_BODY_SIZE:
+                await self._reject(
+                    send,
+                    413,
+                    "Submission is too large. Reduce the total upload size to 30 MiB or less.",
+                )
+                return
+
+            chunks.append(message)
+
+            if not message.get("more_body", False):
+                break
+
+        index = 0
+
+        async def replay_body():
+            nonlocal index
+
+            if index < len(chunks):
+                message = chunks[index]
+                index += 1
+                return message
+
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, replay_body, send)
+
+    async def _reject(self, send, status_code, detail):
+        import json
+
+        body = json.dumps({"detail": detail}).encode("utf-8")
+
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                    (b"x-content-type-options", b"nosniff"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
 app = FastAPI(
     title="EliteMatch Group API",
     description="Homeowner lead intake and contractor referral backend.",
     version="0.2.0",
 )
+app.add_middleware(HomeownerRequestBodyLimitMiddleware)
+
 app.mount(
     "/static",
     StaticFiles(directory=Path(__file__).resolve().parent.parent / "static"),
@@ -253,6 +359,20 @@ class ContractorLoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=1, max_length=1024)
 
+class ContractorPasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=12, max_length=1024)
+
+class RequiredPasswordChangeRequest(BaseModel):
+    new_password: str = Field(min_length=12, max_length=1024)
+    confirm_password: str = Field(min_length=12, max_length=1024)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
+
 class AdminLoginRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=1, max_length=1024)
@@ -261,6 +381,24 @@ class ContractorAccountCreate(BaseModel):
     contractor_id: str = Field(min_length=1, max_length=30)
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=12, max_length=1024)
+    confirm_password: str = Field(min_length=12, max_length=1024)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self):
+        if self.password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
+
+class ContractorPasswordResetRequest(BaseModel):
+    temporary_password: str = Field(min_length=12, max_length=1024)
+    confirm_password: str = Field(min_length=12, max_length=1024)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self):
+        if self.temporary_password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
+
 
 
 # -------------------------
@@ -388,7 +526,11 @@ def admin_logout(request: Request, response: Response):
 # Contractor authentication
 # -------------------------
 
-def require_contractor(request: Request) -> dict:
+def require_contractor(
+    request: Request,
+    *,
+    allow_password_change_required: bool = False,
+) -> dict:
     """Return the authenticated contractor or reject the request."""
 
     token = request.cookies.get("emg_session")
@@ -398,6 +540,15 @@ def require_contractor(request: Request) -> dict:
         raise HTTPException(
             status_code=401,
             detail="A valid contractor session is required.",
+        )
+
+    if (
+        contractor["must_change_password"]
+        and not allow_password_change_required
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You must change your temporary password before continuing.",
         )
 
     return contractor
@@ -467,6 +618,7 @@ def contractor_login(
         "company_name": session["company_name"],
         "email": session["email"],
         "expires_in": session["expires_in"],
+        "must_change_password": session["must_change_password"],
     }
 
 @app.post("/contractor-auth/logout")
@@ -489,15 +641,90 @@ def contractor_logout(
 
     return {"message": "Logged out."}
 
+@app.post("/contractor-auth/change-password")
+def contractor_change_password(
+    request: Request,
+    password_input: ContractorPasswordChangeRequest,
+    response: Response,
+):
+    require_allowed_origin(request)
+    contractor = require_contractor(request)
+
+    try:
+        change_contractor_password(
+            account_id=contractor["account_id"],
+            current_password=password_input.current_password,
+            new_password=password_input.new_password,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    response.delete_cookie(
+        key="emg_session",
+        path="/",
+        httponly=True,
+        secure=contractor_cookie_secure(),
+        samesite="lax",
+    )
+
+    return {
+        "message": "Password changed successfully. Please log in again."
+    }
+
+@app.post("/contractor-auth/required-password-change")
+def contractor_required_password_change(
+    request: Request,
+    password_input: RequiredPasswordChangeRequest,
+    response: Response,
+):
+    require_allowed_origin(request)
+
+    contractor = require_contractor(
+        request,
+        allow_password_change_required=True,
+    )
+
+    session_token = request.cookies.get("emg_session") or ""
+
+    try:
+        result = complete_required_password_change(
+            account_id=contractor["account_id"],
+            session_token=session_token,
+            new_password=password_input.new_password,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    response.set_cookie(
+        key="emg_session",
+        value=result["session_token"],
+        max_age=result["expires_in"],
+        httponly=True,
+        secure=contractor_cookie_secure(),
+        samesite="lax",
+        path="/",
+    )
+
+    return {"message": "Password changed successfully."}
 
 @app.get("/contractor-auth/me")
 def contractor_me(request: Request):
-    contractor = require_contractor(request)
+    contractor = require_contractor(
+        request,
+        allow_password_change_required=True,
+    )
 
     return {
         "contractor_id": contractor["contractor_id"],
         "company_name": contractor["company_name"],
         "email": contractor["email"],
+        "must_change_password": contractor["must_change_password"],
     }
 
 @app.get("/contractor/profile")
@@ -882,6 +1109,139 @@ def contractor_photo(
         },
     )
 
+@app.get("/admin/photos/{photo_id}")
+def admin_photo(photo_id: str, request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT s3_key, content_type
+                FROM photos
+                WHERE photo_id = %s
+            """, (photo_id,))
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    s3_key = row["s3_key"] or ""
+    if not s3_key.startswith("local/"):
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    stored_name = s3_key.removeprefix("local/")
+    if not stored_name or Path(stored_name).name != stored_name:
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    upload_dir = (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "uploads"
+    )
+    file_path = upload_dir / stored_name
+
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Photo file not found.",
+        )
+
+    content_type = row["content_type"]
+    if content_type not in {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    }:
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    return FileResponse(
+        path=file_path,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+@app.get("/admin/jobs/{job_id}/photos")
+def admin_job_photos(job_id: str, request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    p.photo_id,
+                    p.original_filename,
+                    p.content_type,
+                    p.uploaded_at::text AS uploaded_at
+                FROM photos AS p
+                JOIN jobs AS j
+                  ON j.id = p.job_id
+                  OR (
+                      p.job_id IS NULL
+                      AND p.lead_id = j.lead_id
+                  )
+                WHERE j.job_id = %s
+                  AND p.lead_id = j.lead_id
+                ORDER BY p.uploaded_at, p.id
+            """, (job_id,))
+            rows = cur.fetchall()
+
+    return [
+        {
+            "photo_id": row["photo_id"],
+            "filename": row["original_filename"] or "Job photo",
+            "content_type": row["content_type"],
+            "uploaded_at": row["uploaded_at"],
+            "url": f"/admin/photos/{row['photo_id']}",
+        }
+        for row in rows
+    ]
+
+@app.get("/admin/leads/{lead_id}/photos")
+def admin_lead_photos(lead_id: str, request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    p.photo_id,
+                    p.original_filename,
+                    p.content_type,
+                    p.uploaded_at::text AS uploaded_at
+                FROM photos AS p
+                JOIN leads AS l ON l.id = p.lead_id
+                WHERE l.lead_id = %s
+                  AND p.job_id IS NULL
+                  AND p.contractor_id IS NULL
+                ORDER BY p.uploaded_at, p.id
+            """, (lead_id,))
+            rows = cur.fetchall()
+
+    return [
+        {
+            "photo_id": row["photo_id"],
+            "filename": row["original_filename"] or "Homeowner photo",
+            "content_type": row["content_type"],
+            "uploaded_at": row["uploaded_at"],
+            "url": f"/admin/photos/{row['photo_id']}",
+        }
+        for row in rows
+    ]
 
 @app.get("/admin/overview")
 def admin_overview(request: Request):
@@ -933,6 +1293,156 @@ def admin_list_leads(request: Request):
             """)
             return [dict(row) for row in cur.fetchall()]
 
+
+@app.get("/admin/jobs/{job_id}/activity")
+def admin_job_activity(job_id: str, request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    sh.event_type,
+                    sh.previous_status,
+                    sh.new_status,
+                    sh.metadata,
+                    sh.created_at::text AS created_at
+                FROM status_history AS sh
+                JOIN jobs AS j
+                  ON j.id = sh.job_id
+                WHERE j.job_id = %s
+                  AND (
+                      sh.job_id = j.id
+                      OR sh.opportunity_id = j.opportunity_id
+                  )
+                ORDER BY sh.created_at ASC, sh.id ASC
+                """,
+                (job_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+
+@app.get("/admin/contractors/{contractor_id}/activity")
+def admin_contractor_activity(
+    contractor_id: str,
+    request: Request,
+):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Jobs belonging to this contractor.
+            cur.execute(
+                """
+                SELECT
+                    j.job_id,
+                    l.customer_name,
+                    j.status,
+                    j.created_at::text AS created_at
+                FROM jobs AS j
+                JOIN contractors AS c
+                  ON c.id = j.contractor_id
+                JOIN leads AS l
+                  ON l.id = j.lead_id
+                WHERE c.contractor_id = %s
+                ORDER BY j.created_at DESC, j.id DESC
+                """,
+                (contractor_id,),
+            )
+            jobs = [dict(row) for row in cur.fetchall()]
+
+            # Opportunities that have not become jobs.
+            cur.execute(
+                """
+                SELECT
+                    o.opportunity_id,
+                    l.customer_name,
+                    o.status,
+                    o.sent_at::text AS sent_at
+                FROM opportunities AS o
+                JOIN contractors AS c
+                  ON c.id = o.contractor_id
+                JOIN leads AS l
+                  ON l.id = o.lead_id
+                LEFT JOIN jobs AS j
+                  ON j.opportunity_id = o.id
+                WHERE c.contractor_id = %s
+                  AND j.id IS NULL
+                ORDER BY o.sent_at DESC, o.id DESC
+                """,
+                (contractor_id,),
+            )
+            unassigned_opportunities = [
+                dict(row) for row in cur.fetchall()
+            ]
+
+            # Keep contractor profile events separate from job events.
+            cur.execute(
+                """
+                SELECT
+                    sh.event_type,
+                    sh.previous_status,
+                    sh.new_status,
+                    sh.metadata,
+                    sh.created_at::text AS created_at
+                FROM status_history AS sh
+                JOIN contractors AS c
+                  ON c.id = sh.contractor_id
+                WHERE c.contractor_id = %s
+                  AND sh.event_type IN (
+                      'ContractorCreated',
+                      'ContractorMatchingProfileUpdated'
+                  )
+                ORDER BY sh.created_at ASC, sh.id ASC
+                """,
+                (contractor_id,),
+            )
+            profile_events = [
+                dict(row) for row in cur.fetchall()
+            ]
+
+            return {
+                "jobs": jobs,
+                "unassigned_opportunities": unassigned_opportunities,
+                "profile_events": profile_events,
+            }
+
+
+
+@app.get("/admin/jobs")
+def admin_list_jobs(request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    j.job_id,
+                    j.status,
+                    j.quoted_amount::float AS quoted_amount,
+                    j.created_at::text AS created_at,
+                    j.updated_at::text AS updated_at,
+                    l.lead_id,
+                    l.zip_code,
+                    l.service_type,
+                    l.description,
+                    l.customer_name,
+                    l.customer_email,
+                    l.customer_phone,
+                    c.contractor_id,
+                    c.company_name,
+                    c.contact_name AS contractor_contact_name
+                FROM jobs AS j
+                JOIN leads AS l
+                  ON l.id = j.lead_id
+                JOIN contractors AS c
+                  ON c.id = j.contractor_id
+                ORDER BY j.updated_at DESC
+                LIMIT 200
+            """)
+            return [dict(row) for row in cur.fetchall()]
 
 @app.get("/admin/contractors")
 def admin_list_contractors(request: Request):
@@ -1016,6 +1526,33 @@ def admin_create_contractor_account(
     }
 
 
+@app.post("/admin/contractor-accounts/{contractor_id}/reset-password")
+def admin_reset_contractor_password(
+    contractor_id: str,
+    password_input: ContractorPasswordResetRequest,
+    request: Request,
+):
+    require_admin(request)
+
+    try:
+        reset_contractor_password(
+            contractor_id=contractor_id,
+            temporary_password=password_input.temporary_password,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    return {
+        "message": (
+            "Temporary password set. Existing sessions were revoked, "
+            "and the contractor must change the password at next login."
+        )
+    }
+
+
 # -------------------------
 # Health
 # -------------------------
@@ -1075,12 +1612,32 @@ async def submit_homeowner_request(
     require_allowed_origin(request)
 
     customer_name = customer_name.strip()
-    customer_phone = normalize_us_phone(customer_phone)
+    customer_phone = customer_phone.strip()
     zip_code = zip_code.strip()
     service_type = service_type.strip()
     description = description.strip()
     customer_email = (customer_email or "").strip() or None
     additional_info = (additional_info or "").strip() or None
+
+    if len(customer_name) > 150:
+        raise HTTPException(status_code=422, detail="Customer name must be 150 characters or fewer.")
+
+    if len(customer_phone) > 30:
+        raise HTTPException(status_code=422, detail="Phone number must be 30 characters or fewer.")
+
+    if customer_email and len(customer_email) > 255:
+        raise HTTPException(status_code=422, detail="Email must be 255 characters or fewer.")
+
+    if len(service_type) > 100:
+        raise HTTPException(status_code=422, detail="Service type must be 100 characters or fewer.")
+
+    if len(description) > 5000:
+        raise HTTPException(status_code=422, detail="Job description must be 5000 characters or fewer.")
+
+    if additional_info and len(additional_info) > 5000:
+        raise HTTPException(status_code=422, detail="Additional information must be 5000 characters or fewer.")
+
+    customer_phone = normalize_us_phone(customer_phone)
 
     if not customer_name or not customer_phone:
         raise HTTPException(
@@ -1470,6 +2027,9 @@ def list_contractor_jobs(request: Request):
                     l.zip_code,
                     l.service_type,
                     l.description,
+                    l.customer_name,
+                    l.customer_phone,
+                    l.customer_email,
                     j.quoted_amount::float AS quoted_amount,
                     j.created_at::text AS created_at,
                     j.updated_at::text AS updated_at

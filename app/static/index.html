@@ -194,6 +194,39 @@
       </div>
     </section>
 
+        <section id="passwordChangeView" class="login-wrap hidden">
+      <div class="card">
+        <h1>Set a New Password</h1>
+        <p class="muted">You must replace your temporary password before accessing the contractor portal.</p>
+        <form id="requiredPasswordChangeForm">
+          <label for="requiredNewPassword">New Password</label>
+          <input
+            id="requiredNewPassword"
+            name="new_password"
+            type="password"
+            autocomplete="new-password"
+            minlength="12"
+            maxlength="1024"
+            required
+          >
+
+          <label for="requiredConfirmPassword">Confirm New Password</label>
+          <input
+            id="requiredConfirmPassword"
+            name="confirm_password"
+            type="password"
+            autocomplete="new-password"
+            minlength="12"
+            maxlength="1024"
+            required
+          >
+
+          <button class="btn" type="submit" style="width:100%;margin-top:18px">Apply</button>
+        </form>
+        <p id="requiredPasswordChangeMessage" class="muted small" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
     <section id="dashboardView" class="hidden">
       <h1 id="welcomeHeading">Contractor dashboard</h1>
       <p class="muted">Manage your EMG activity in one place.</p>
@@ -286,7 +319,7 @@
           </form>
         </details>
       </section>
-      
+
       <section id="panel-profile" class="card hidden">
         <h2>Matching Profile</h2>
         <p class="muted small">
@@ -375,13 +408,26 @@
 
     function showLogin(note = "") {
       $("loginView").classList.remove("hidden");
+      $("passwordChangeView").classList.add("hidden");
       $("dashboardView").classList.add("hidden");
       $("logoutBtn").classList.add("hidden");
       if (note) message(note, "info");
     }
 
+    function showRequiredPasswordChange() {
+      $("loginView").classList.add("hidden");
+      $("passwordChangeView").classList.remove("hidden");
+      $("dashboardView").classList.add("hidden");
+      $("logoutBtn").classList.remove("hidden");
+      $("requiredNewPassword").value = "";
+      $("requiredConfirmPassword").value = "";
+      $("requiredPasswordChangeMessage").textContent = "";
+      message("");
+    }
+
     function showDashboard(user) {
       $("loginView").classList.add("hidden");
+      $("passwordChangeView").classList.add("hidden");
       $("dashboardView").classList.remove("hidden");
       $("logoutBtn").classList.remove("hidden");
       const label = user?.name || user?.company_name || user?.email;
@@ -795,13 +841,28 @@ async function loadPhotoGallery(container, endpoint) {
       top.append(el("h3", "", `${pretty(job.service_type)} · ${job.zip_code || "ZIP unavailable"}`));
       top.append(el("span", "status", pretty(job.status)));
       card.append(top);
-      card.append(createHomeownerContact(job));
+      const contactSection = createHomeownerContact({});
+      card.append(contactSection);
+
+      void request(`/contractor/jobs/${encodeURIComponent(job.job_id)}`)
+        .then((details) => {
+            if (contactSection.isConnected) {
+                contactSection.replaceWith(createHomeownerContact(details));
+            }
+        })
+        .catch((error) => {
+            console.error(
+                `Unable to load homeowner contact for job ${job.job_id}:`,
+                error
+            );
+        });
+
       const description = (job.description || "No description provided.").trim();
       const descriptionPreview = description.length > 200
         ? `${description.slice(0, 200).trimEnd()}…`
         : description;
       card.append(el("p", "", descriptionPreview));
-      
+
       card.append(el("p", "muted small",
         `Job ID: ${job.job_id} · Updated: ${job.updated_at ? new Date(job.updated_at).toLocaleString() : "—"}`));
 
@@ -892,9 +953,53 @@ async function loadPhotoGallery(container, endpoint) {
           })
         });
         $("password").value = "";
-        showDashboard(result?.contractor || result?.user || result);
+        const user = result?.contractor || result?.user || result;
+        if (user.must_change_password) {
+          showRequiredPasswordChange();
+        } else {
+          showDashboard(user);
+        }
       } catch (error) {
         message(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    $("requiredPasswordChangeForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const newPassword = $("requiredNewPassword").value;
+      const confirmPassword = $("requiredConfirmPassword").value;
+      const messageBox = $("requiredPasswordChangeMessage");
+      const button = event.submitter;
+
+      if (newPassword !== confirmPassword) {
+        messageBox.textContent = "Passwords do not match.";
+        messageBox.style.color = "var(--admin-red, #b42318)";
+        return;
+      }
+
+      button.disabled = true;
+      messageBox.textContent = "Updating password…";
+
+      try {
+        await request("/contractor-auth/required-password-change", {
+          method: "POST",
+          body: JSON.stringify({
+            new_password: newPassword,
+            confirm_password: confirmPassword
+          })
+        });
+
+        $("requiredNewPassword").value = "";
+        $("requiredConfirmPassword").value = "";
+
+        const user = await request("/contractor-auth/me");
+        showDashboard(user?.contractor || user?.user || user);
+      } catch (error) {
+        messageBox.textContent = error.message;
+        messageBox.style.color = "red";
       } finally {
         button.disabled = false;
       }
@@ -1084,8 +1189,14 @@ async function loadPhotoGallery(container, endpoint) {
 
     async function initialize() {
       try {
-        const user = await request("/contractor-auth/me");
-        showDashboard(user?.contractor || user?.user || user);
+        const result = await request("/contractor-auth/me");
+        const user = result?.contractor || result?.user || result;
+
+        if (user.must_change_password) {
+          showRequiredPasswordChange();
+        } else {
+          showDashboard(user);
+        }
       } catch {
         showLogin();
       }

@@ -13,7 +13,7 @@ def test_service_rejects_opportunity_owned_by_another_contractor():
     try:
         lead = create_lead(
             zip_code="83814",
-            service_type="Roofing",
+            service_type="Service Auth Roofing",
             description="Temporary service authorization test.",
             requested_bid_count=1,
             customer_name="Temporary Service Auth Test",
@@ -25,7 +25,7 @@ def test_service_rejects_opportunity_owned_by_another_contractor():
             company_name="EMG Service Auth Contractor A",
             email="service-auth-a@example.com",
             service_area=["83814"],
-            specialties=["Roofing"],
+            specialties=["Service Auth Roofing"],
         )
         contractor_ids.append(contractor_a["contractor_id"])
 
@@ -33,7 +33,7 @@ def test_service_rejects_opportunity_owned_by_another_contractor():
             company_name="EMG Service Auth Contractor B",
             email="service-auth-b@example.com",
             service_area=["83814"],
-            specialties=["Roofing"],
+            specialties=["Service Auth Roofing"],
         )
         contractor_ids.append(contractor_b["contractor_id"])
 
@@ -136,6 +136,16 @@ def test_service_rejects_opportunity_owned_by_another_contractor():
                         )
 
                 if contractor_ids:
+                    cursor.execute(
+                        """
+                        DELETE FROM status_history
+                        WHERE contractor_id IN (
+                            SELECT id FROM contractors
+                            WHERE contractor_id = ANY(%s)
+                        )
+                        """,
+                        (contractor_ids,),
+                    )
                     cursor.execute(
                         """
                         DELETE FROM contractors

@@ -33,7 +33,7 @@ def opportunity_owned_by_contractor():
     try:
         lead = create_lead(
             zip_code="83814",
-            service_type="Roofing",
+            service_type="Auth API Roofing",
             description="Temporary opportunity authorization test.",
             requested_bid_count=1,
             customer_name="Temporary Authorization Test",
@@ -51,7 +51,7 @@ def opportunity_owned_by_contractor():
                 company_name=f"EMG Auth Test {label} {suffix}",
                 email=email,
                 service_area=["83814"],
-                specialties=["Roofing"],
+                specialties=["Auth API Roofing"],
             )
             contractors.append(contractor)
             contractor_ids.append(contractor["contractor_id"])
@@ -166,6 +166,16 @@ def opportunity_owned_by_contractor():
                     )
                     cursor.execute(
                         """
+                        DELETE FROM status_history
+                        WHERE contractor_id IN (
+                            SELECT id FROM contractors
+                            WHERE contractor_id = ANY(%s)
+                        )
+                        """,
+                        (contractor_ids,),
+                    )
+                    cursor.execute(
+                        """
                         DELETE FROM contractors
                         WHERE contractor_id = ANY(%s)
                         """,
@@ -174,15 +184,34 @@ def opportunity_owned_by_contractor():
 
 
 def login_contractor(api_client, contractor):
+    password = contractor.get("password", TEST_PASSWORD)
+
     response = api_client.post(
         "/contractor-auth/login",
         headers={"Origin": TEST_ORIGIN},
         json={
             "email": contractor["email"],
-            "password": TEST_PASSWORD,
+            "password": password,
         },
     )
     assert response.status_code == 200, response.text
+
+    if response.json().get("must_change_password"):
+        permanent_password = "EMG-Opportunity-Permanent-456!"
+
+        change_response = api_client.post(
+            "/contractor-auth/required-password-change",
+            headers={"Origin": TEST_ORIGIN},
+            json={
+                "new_password": permanent_password,
+                "confirm_password": permanent_password,
+            },
+        )
+        assert change_response.status_code == 200, change_response.text
+
+        # Remember the permanent password for subsequent logins in this test.
+        contractor["password"] = permanent_password
+
     return response
 
 
@@ -352,7 +381,7 @@ def test_contractor_inbox_does_not_expose_homeowner_contacts_or_photo_keys(
 
     item = opportunities[0]
     assert item["zip_code"] == "83814"
-    assert item["service_type"] == "Roofing"
+    assert item["service_type"] == "Auth API Roofing"
     assert item["description"]
     assert item["sent_at"]
     assert "expires_at" in item
@@ -400,7 +429,7 @@ def test_contractor_can_view_own_opportunity_details(
     assert detail["opportunity_id"] == data["opportunity_id"]
     assert detail["status"] == "PENDING"
     assert detail["zip_code"] == "83814"
-    assert detail["service_type"] == "Roofing"
+    assert detail["service_type"] == "Auth API Roofing"
     assert detail["description"]
     assert detail["sent_at"]
     assert "expires_at" in detail

@@ -201,6 +201,16 @@ def test_routing_failure_can_be_retried_without_releasing_twice(monkeypatch):
 
                     if contractor_ids:
                         cursor.execute(
+                            """
+                        DELETE FROM status_history
+                        WHERE contractor_id IN (
+                            SELECT id FROM contractors
+                            WHERE contractor_id = ANY(%s)
+                        )
+                            """,
+                            (contractor_ids,),
+                        )
+                        cursor.execute(
                             "DELETE FROM contractors WHERE contractor_id = ANY(%s)",
                             (contractor_ids,),
                         )

@@ -280,6 +280,7 @@ def test_account_provisioning_rejects_missing_admin_session(monkeypatch):
             "contractor_id": "EMGC-TEST",
             "email": "contractor@example.com",
             "password": "test-password-123",
+            "confirm_password": "test-password-123",
         },
     )
 
@@ -308,11 +309,83 @@ def test_account_provisioning_rejects_invalid_admin_session(monkeypatch):
             "contractor_id": "EMGC-TEST",
             "email": "contractor@example.com",
             "password": "test-password-123",
+            "confirm_password": "test-password-123",
         },
     )
 
     assert response.status_code == 401
     assert calls == []
+
+def test_password_reset_rejects_missing_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_reset(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Password reset must not be called.")
+
+    monkeypatch.setattr(api, "reset_contractor_password", fake_reset)
+
+    response = client.post(
+        "/admin/contractor-accounts/EMGC-TEST/reset-password",
+        json={
+            "temporary_password": "temporary-password-123",
+            "confirm_password": "temporary-password-123",
+        },
+    )
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_password_reset_calls_service_with_valid_admin_session(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_reset(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(api, "reset_contractor_password", fake_reset)
+
+    response = client.post(
+        "/admin/contractor-accounts/EMGC-TEST/reset-password",
+        cookies=ADMIN_COOKIE,
+        json={
+            "temporary_password": "temporary-password-123",
+            "confirm_password": "temporary-password-123",
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "contractor_id": "EMGC-TEST",
+            "temporary_password": "temporary-password-123",
+        }
+    ]
+
+
+def test_password_reset_rejects_mismatched_confirmation(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    calls = []
+
+    def fake_reset(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(api, "reset_contractor_password", fake_reset)
+
+    response = client.post(
+        "/admin/contractor-accounts/EMGC-TEST/reset-password",
+        cookies=ADMIN_COOKIE,
+        json={
+            "temporary_password": "temporary-password-123",
+            "confirm_password": "different-temporary-password-456",
+        },
+    )
+
+    assert response.status_code == 422
+    assert calls == []
+
 
 # -------------------------
 # Contractor profile creation security
