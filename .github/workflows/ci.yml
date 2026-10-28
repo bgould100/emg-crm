@@ -1,6 +1,8 @@
 
 name: EMG CI
 
+run-name: EMG CRM - Tests, Docker Build & Terraform Validation
+
 on:
   push:
     branches: [master]
