@@ -6,3 +6,4 @@ boto3==1.43.110
 python-dotenv==1.2.4
 pwdlib[argon2]
 python-multipart
+Pillow==13.0.0

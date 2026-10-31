@@ -6,6 +6,7 @@ from app.services.matching import route_opportunities_to_fill_slots
 from app.services.opportunities import respond_to_opportunity
 from app.services.job_status import update_job_status
 from app.services.slot_release import release_accepted_bid_slot
+from decimal import Decimal
 
 def get_opportunity_contractor_pk(opportunity_id):
     with get_connection() as connection:
@@ -224,6 +225,7 @@ def test_accepting_opportunity_creates_job_linked_to_that_opportunity():
                     SELECT
                         j.job_id,
                         j.opportunity_id,
+                        j.referral_fee_rate,
                         o.opportunity_id AS accepted_opportunity_id,
                         o.status AS opportunity_status
                     FROM jobs j
@@ -238,6 +240,7 @@ def test_accepting_opportunity_creates_job_linked_to_that_opportunity():
         assert job["opportunity_id"] is not None
         assert job["accepted_opportunity_id"] == opportunity_id
         assert job["opportunity_status"] == "ACCEPTED"
+        assert job["referral_fee_rate"] == Decimal("0.1000")
 
     finally:
         # Remove only records created for this test.

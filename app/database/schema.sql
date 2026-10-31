@@ -1,4 +1,4 @@
-﻿
+
 CREATE TABLE leads (
     id BIGSERIAL PRIMARY KEY,
     lead_id VARCHAR(30) UNIQUE NOT NULL,
@@ -79,6 +79,7 @@ CREATE TABLE jobs (
     contractor_id BIGINT NOT NULL REFERENCES contractors(id),
     status VARCHAR(40) NOT NULL DEFAULT 'QUOTE_IN_PROGRESS',
     quoted_amount NUMERIC(12, 2),
+    photos_locked_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

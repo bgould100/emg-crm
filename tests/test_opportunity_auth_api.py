@@ -1,5 +1,6 @@
-
 import secrets
+import io
+from PIL import Image
 
 import pytest
 from fastapi.testclient import TestClient
@@ -912,3 +913,706 @@ def test_multiple_contractors_reporting_bid_won_queues_one_alert(
             event_count = cursor.fetchone()["event_count"]
 
     assert event_count == 1
+
+
+def _accept_test_job(api_client, data):
+    login_contractor(api_client, data["contractor_a"])
+
+    response = api_client.post(
+        f"/opportunities/{data['opportunity_id']}/respond",
+        headers={"Origin": TEST_ORIGIN},
+        json={"decision": "accept"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["job_id"]
+
+
+def _set_test_job_in_progress(api_client, job_id):
+    for status in ("BID_WON", "JOB_IN_PROGRESS"):
+        response = api_client.patch(
+            f"/jobs/{job_id}/status",
+            headers={"Origin": TEST_ORIGIN},
+            json={"status": status},
+        )
+        assert response.status_code == 200, response.text
+
+def test_contractor_can_delete_own_job_photo_while_in_progress(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    upload_response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            (
+                "photos",
+                ("deletable-photo.jpg", _make_test_jpeg(), "image/jpeg"),
+            ),
+        ],
+    )
+    assert upload_response.status_code == 201, upload_response.text
+
+    photo_id = upload_response.json()[0]["photo_id"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s3_key
+                FROM photos
+                WHERE photo_id = %s
+                """,
+                (photo_id,),
+            )
+            photo_record = cursor.fetchone()
+
+    assert photo_record is not None
+
+    stored_path = (
+        api.Path(__file__).resolve().parents[1]
+        / "data"
+        / "uploads"
+        / photo_record["s3_key"].removeprefix("local/")
+    )
+    assert stored_path.is_file()
+
+    try:
+        delete_response = api_client.delete(
+            f"/contractor/jobs/{job_id}/photos/{photo_id}",
+            headers={"Origin": TEST_ORIGIN},
+        )
+
+        assert delete_response.status_code == 200, delete_response.text
+        assert delete_response.json()["message"] == "Photo deleted successfully."
+        assert not stored_path.exists()
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS photo_count
+                    FROM photos
+                    WHERE photo_id = %s
+                    """,
+                    (photo_id,),
+                )
+                photo_count = cursor.fetchone()["photo_count"]
+
+        assert photo_count == 0
+
+    finally:
+        stored_path.unlink(missing_ok=True)
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM photos WHERE photo_id = %s",
+                    (photo_id,),
+                )
+
+def test_contractor_cannot_delete_job_photo_after_permanent_lock(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    upload_response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            (
+                "photos",
+                ("locked-photo.jpg", _make_test_jpeg(), "image/jpeg"),
+            ),
+        ],
+    )
+    assert upload_response.status_code == 201, upload_response.text
+
+    photo_id = upload_response.json()[0]["photo_id"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s3_key
+                FROM photos
+                WHERE photo_id = %s
+                """,
+                (photo_id,),
+            )
+            photo_record = cursor.fetchone()
+
+            cursor.execute(
+                """
+                UPDATE jobs
+                SET photos_locked_at = CURRENT_TIMESTAMP
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+
+    assert photo_record is not None
+
+    stored_path = (
+        api.Path(__file__).resolve().parents[1]
+        / "data"
+        / "uploads"
+        / photo_record["s3_key"].removeprefix("local/")
+    )
+
+    try:
+        assert stored_path.is_file()
+
+        delete_response = api_client.delete(
+            f"/contractor/jobs/{job_id}/photos/{photo_id}",
+            headers={"Origin": TEST_ORIGIN},
+        )
+
+        assert delete_response.status_code == 409, delete_response.text
+
+        assert stored_path.is_file()
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS photo_count
+                    FROM photos
+                    WHERE photo_id = %s
+                    """,
+                    (photo_id,),
+                )
+                photo_count = cursor.fetchone()["photo_count"]
+
+        assert photo_count == 1
+
+    finally:
+        stored_path.unlink(missing_ok=True)
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM photos WHERE photo_id = %s",
+                    (photo_id,),
+                )
+
+def test_contractor_cannot_delete_homeowner_job_photo(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    photo_id = f"EMGP-TEST-{secrets.token_hex(6).upper()}"
+    stored_name = f"{photo_id}.jpg"
+
+    upload_dir = (
+        api.Path(__file__).resolve().parents[1]
+        / "data"
+        / "uploads"
+    )
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored_path = upload_dir / stored_name
+
+    stored_path.write_bytes(_make_test_jpeg())
+
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT lead_id
+                    FROM jobs
+                    WHERE job_id = %s
+                    """,
+                    (job_id,),
+                )
+                job = cursor.fetchone()
+
+                assert job is not None
+
+                cursor.execute(
+                    """
+                    INSERT INTO photos (
+                        photo_id,
+                        lead_id,
+                        s3_key,
+                        original_filename,
+                        content_type
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        photo_id,
+                        job["lead_id"],
+                        f"local/{stored_name}",
+                        "homeowner-photo.jpg",
+                        "image/jpeg",
+                    ),
+                )
+
+        delete_response = api_client.delete(
+            f"/contractor/jobs/{job_id}/photos/{photo_id}",
+            headers={"Origin": TEST_ORIGIN},
+        )
+
+        assert delete_response.status_code == 404, delete_response.text
+        assert stored_path.is_file()
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS photo_count
+                    FROM photos
+                    WHERE photo_id = %s
+                    """,
+                    (photo_id,),
+                )
+                photo_count = cursor.fetchone()["photo_count"]
+
+        assert photo_count == 1
+
+    finally:
+        stored_path.unlink(missing_ok=True)
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM photos WHERE photo_id = %s",
+                    (photo_id,),
+                )
+
+def test_contractor_cannot_upload_job_photos_after_permanent_lock(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE jobs
+                SET photos_locked_at = CURRENT_TIMESTAMP
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+
+    upload_response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            (
+                "photos",
+                ("locked-photo.jpg", _make_test_jpeg(), "image/jpeg"),
+            ),
+        ],
+    )
+
+    assert upload_response.status_code == 409, upload_response.text
+
+def test_job_photo_lock_is_set_on_completion_and_never_cleared(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    # Completing the job should create the permanent photo lock.
+    response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "JOB_COMPLETED"},
+    )
+    assert response.status_code == 200, response.text
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, photos_locked_at
+                FROM jobs
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+            job = cursor.fetchone()
+
+    assert job is not None
+    assert job["status"] == "JOB_COMPLETED"
+    assert job["photos_locked_at"] is not None
+
+    # Save the original timestamp to verify it is never overwritten.
+    locked_at = job["photos_locked_at"]
+
+    # Payment received is the only permitted transition after completion.
+    response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "PAYMENT_RECEIVED"},
+    )
+    assert response.status_code == 200, response.text
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, photos_locked_at
+                FROM jobs
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+            job = cursor.fetchone()
+
+    assert job is not None
+    assert job["status"] == "PAYMENT_RECEIVED"
+    assert job["photos_locked_at"] == locked_at
+
+
+
+def test_contractor_job_photo_upload_rejected_before_job_in_progress(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+
+    response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            ("photos", ("test.jpg", b"\xff\xd8\xfftest", "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 409, response.text
+    assert "in progress" in response.json()["detail"].lower()
+
+
+def test_contractor_job_photo_upload_requires_authentication(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    api_client.cookies.clear()
+
+    response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            ("photos", ("test.jpg", b"\xff\xd8\xfftest", "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 401, response.text
+
+
+def test_contractor_cannot_upload_photos_to_another_contractors_job(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    api_client.cookies.clear()
+    login_contractor(api_client, data["contractor_b"])
+
+    response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            ("photos", ("test.jpg", b"\xff\xd8\xfftest", "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 404, response.text
+
+
+def test_contractor_job_photo_upload_rejects_invalid_image(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            ("photos", ("test.jpg", b"not an image", "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    assert "valid JPEG, PNG, or WebP" in response.json()["detail"]
+
+def _make_test_jpeg():
+    image = Image.new("RGB", (10, 10), color="white")
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format="JPEG")
+    return image_bytes.getvalue()
+
+def test_contractor_job_photo_upload_enforces_fifteen_photo_total(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    upload_url = f"/contractor/jobs/{job_id}/photos"
+
+    try:
+        first_upload = api_client.post(
+            upload_url,
+            headers={"Origin": TEST_ORIGIN},
+            files=[
+                (
+                    "photos",
+                    (
+                        f"contractor-photo-{index}.jpg",
+                        _make_test_jpeg(),
+                        "image/jpeg",
+                    ),
+                )
+                for index in range(10)
+            ],
+        )
+
+        assert first_upload.status_code == 201, first_upload.text
+        assert len(first_upload.json()) == 10
+
+        second_upload = api_client.post(
+            upload_url,
+            headers={"Origin": TEST_ORIGIN},
+            files=[
+                (
+                    "photos",
+                    (
+                        f"additional-photo-{index}.jpg",
+                        _make_test_jpeg(),
+                        "image/jpeg",
+                    ),
+                )
+                for index in range(6)
+            ],
+        )
+
+        assert second_upload.status_code == 422, second_upload.text
+        assert "fifteen photos" in second_upload.json()["detail"]
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS photo_count
+                    FROM photos
+                    WHERE job_id = (
+                        SELECT id FROM jobs WHERE job_id = %s
+                    )
+                    """,
+                    (job_id,),
+                )
+                photo_count = cursor.fetchone()["photo_count"]
+
+        assert photo_count == 10
+
+    finally:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT s3_key
+                    FROM photos
+                    WHERE job_id = (
+                        SELECT id FROM jobs WHERE job_id = %s
+                    )
+                    """,
+                    (job_id,),
+                )
+                photo_records = cursor.fetchall()
+
+        upload_dir = (
+            api.Path(__file__).resolve().parents[1]
+            / "data"
+            / "uploads"
+        )
+
+        for record in photo_records:
+            stored_name = record["s3_key"].removeprefix("local/")
+            (upload_dir / stored_name).unlink(missing_ok=True)
+
+def test_contractor_mpo_photo_upload_is_normalized_to_jpeg(
+    api_client,
+    opportunity_owned_by_contractor,
+    monkeypatch,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    # Preserve the real image module's open function before mocking it.
+    real_image_open = api.Image.open
+
+    class FakeMpoImage:
+        format = "MPO"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def verify(self):
+            pass
+
+        def seek(self, frame):
+            assert frame == 0
+
+        def convert(self, mode):
+            assert mode == "RGB"
+            return Image.new("RGB", (20, 20), color="white")
+
+    monkeypatch.setattr(
+        api.Image,
+        "open",
+        lambda *args, **kwargs: FakeMpoImage(),
+    )
+
+    stored_path = None
+
+    try:
+        response = api_client.post(
+            f"/contractor/jobs/{job_id}/photos",
+            headers={"Origin": TEST_ORIGIN},
+            files=[
+                (
+                    "photos",
+                    ("contractor-progress.jpeg", b"simulated MPO data", "image/jpeg"),
+                ),
+            ],
+        )
+
+        assert response.status_code == 201, response.text
+        uploaded = response.json()
+        assert len(uploaded) == 1
+
+        photo_id = uploaded[0]["photo_id"]
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT s3_key, content_type
+                    FROM photos
+                    WHERE photo_id = %s
+                    """,
+                    (photo_id,),
+                )
+                photo_record = cursor.fetchone()
+
+        assert photo_record is not None
+        assert photo_record["content_type"] == "image/jpeg"
+
+        stored_path = (
+            api.Path(__file__).resolve().parents[1]
+            / "data"
+            / "uploads"
+            / photo_record["s3_key"].removeprefix("local/")
+        )
+
+        # Verify the actual stored bytes are a decodable JPEG.
+        with real_image_open(stored_path) as stored_image:
+            assert stored_image.format == "JPEG"
+            stored_image.load()
+
+    finally:
+        if stored_path is not None:
+            stored_path.unlink(missing_ok=True)
+
+def test_uploaded_contractor_photo_appears_in_admin_job_photos(
+    api_client,
+    opportunity_owned_by_contractor,
+    monkeypatch,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    # This test verifies the photo query and response; admin authentication
+    # itself is covered elsewhere.
+    monkeypatch.setattr(api, "require_admin", lambda request: None)
+
+    response = api_client.post(
+        f"/contractor/jobs/{job_id}/photos",
+        headers={"Origin": TEST_ORIGIN},
+        files=[
+            (
+                "photos",
+                (
+                    "contractor-progress.jpg",
+                    _make_test_jpeg(),
+                    "image/jpeg",
+                ),
+            ),
+        ],
+    )
+
+    assert response.status_code == 201, response.text
+    uploaded = response.json()
+    assert len(uploaded) == 1
+    photo_id = uploaded[0]["photo_id"]
+    assert uploaded[0]["filename"] == "contractor-progress.jpg"
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s3_key
+                FROM photos
+                WHERE photo_id = %s
+                """,
+                (photo_id,),
+            )
+            photo_record = cursor.fetchone()
+
+    assert photo_record is not None
+
+    stored_path = (
+        api.Path(__file__).resolve().parents[1]
+        / "data"
+        / "uploads"
+        / photo_record["s3_key"].removeprefix("local/")
+    )
+
+    try:
+        api_client.cookies.clear()
+        admin_response = api_client.get(
+            f"/admin/jobs/{job_id}/photos",
+        )
+
+        assert admin_response.status_code == 200, admin_response.text
+        admin_photos = admin_response.json()
+        matching = [
+            photo for photo in admin_photos
+            if photo["photo_id"] == photo_id
+        ]
+        assert len(matching) == 1
+        assert matching[0]["url"] == f"/admin/photos/{photo_id}"
+    finally:
+        stored_path.unlink(missing_ok=True)

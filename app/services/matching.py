@@ -1,4 +1,4 @@
-
+﻿
 import secrets
 from typing import Any
 
@@ -85,11 +85,16 @@ def route_opportunities_to_fill_slots(
                 FROM contractors c
                 WHERE c.status = 'ACTIVE'
                   AND c.availability = 'AVAILABLE'
+                  AND c.default_referral_fee_rate > 0
                   AND NOT EXISTS (
                       SELECT 1
                       FROM opportunities o
                       WHERE o.lead_id = %s
                         AND o.contractor_id = c.id
+                        AND (
+                            o.status = 'PENDING'
+                            OR o.status = 'ACCEPTED'
+                        )
                   )
                 """,
                 (lead["id"],),
@@ -161,7 +166,10 @@ def route_opportunities_to_fill_slots(
                         CURRENT_TIMESTAMP,
                         CURRENT_TIMESTAMP + INTERVAL '7 days'
                     )
-                    ON CONFLICT (lead_id, contractor_id) DO NOTHING
+                    ON CONFLICT (lead_id, contractor_id)
+                    WHERE status IN ('PENDING', 'ACCEPTED')
+                      AND slot_released = FALSE
+                    DO NOTHING
                     RETURNING id, opportunity_id, status, match_score
                     """,
                     (
@@ -233,3 +241,5 @@ def route_next_opportunity(
     opportunities = route_opportunities_to_fill_slots(lead_id)
 
     return opportunities[0] if opportunities else None
+
+

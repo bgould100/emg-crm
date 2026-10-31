@@ -120,10 +120,18 @@ def update_job_status(
                 """
                 UPDATE jobs
                 SET status = %s,
+                    photos_locked_at = CASE
+                        WHEN %s = 'JOB_COMPLETED'
+                            THEN COALESCE(
+                                photos_locked_at,
+                                CURRENT_TIMESTAMP
+                            )
+                        ELSE photos_locked_at
+                    END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,
-                (new_status, record["job_pk"]),
+                (new_status, new_status, record["job_pk"]),
             )
 
             cursor.execute(

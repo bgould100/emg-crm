@@ -1,4 +1,4 @@
-
+﻿
 name: EMG CI
 
 run-name: EMG CRM - Tests, Docker Build & Terraform Validation
@@ -80,6 +80,10 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
             -f migrations/010_billing_and_installments.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/011_lock_completed_job_photos.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/012_referral_fee_rates_and_withdrawals.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
             -f app/database/migrations/001_add_must_change_password.sql
 
       - name: Run test suite
@@ -119,3 +123,6 @@ jobs:
 
       - name: Validate Terraform configuration
         run: terraform validate
+
+
+

@@ -61,6 +61,7 @@ def respond_to_opportunity(
                     o.status AS opportunity_status,
                     o.lead_id AS lead_pk,
                     o.contractor_id AS contractor_pk,
+                    o.referral_fee_rate_override,
                     l.lead_id AS lead_id,
                     l.customer_name,
                     l.customer_email,
@@ -87,6 +88,34 @@ def respond_to_opportunity(
             if decision == "accept":
                 cursor.execute(
                     """
+                    SELECT default_referral_fee_rate
+                    FROM contractors
+                    WHERE id = %s
+                    FOR SHARE
+                    """,
+                    (record["contractor_pk"],),
+                )
+                contractor = cursor.fetchone()
+
+                if contractor is None:
+                    raise LookupError("Contractor not found.")
+
+                default_rate = contractor["default_referral_fee_rate"]
+
+                if default_rate <= 0:
+                    raise ValueError(
+                        "This contractor is currently suspended from receiving opportunities."
+                    )
+
+                referral_fee_rate = (
+                    record["referral_fee_rate_override"]
+                    if record["referral_fee_rate_override"] is not None
+                    else default_rate
+                )
+
+            if decision == "accept":
+                cursor.execute(
+                    """
                     UPDATE opportunities
                     SET status = 'ACCEPTED',
                         responded_at = CURRENT_TIMESTAMP,
@@ -105,9 +134,10 @@ def respond_to_opportunity(
                         opportunity_id,
                         lead_id,
                         contractor_id,
-                        status
+                        status,
+                        referral_fee_rate
                     )
-                    VALUES (%s, %s, %s, %s, 'QUOTE_IN_PROGRESS')
+                    VALUES (%s, %s, %s, %s, 'QUOTE_IN_PROGRESS', %s)
                     RETURNING id, job_id
                     """,
                     (
@@ -115,6 +145,7 @@ def respond_to_opportunity(
                         record["opportunity_pk"],
                         record["lead_pk"],
                         record["contractor_pk"],
+                        referral_fee_rate,
                     ),
                 )
                 job = cursor.fetchone()

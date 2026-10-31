@@ -4,11 +4,13 @@ import secrets
 import uuid
 from typing import Literal
 import re
+import io
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
+from PIL import Image, UnidentifiedImageError
 
 from app.database.auth import (
     authenticate_contractor_session,
@@ -940,52 +942,435 @@ def contractor_opportunity_photos(
         for row in rows
     ]
 
-
 @app.get("/contractor/jobs/{job_id}/photos")
 def contractor_job_photos(
     job_id: str,
     request: Request,
 ):
     contractor = require_contractor(request)
+    contractor_pk = contractor["contractor_pk"]
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT
+                    j.status,
+                    j.photos_locked_at,
                     p.photo_id,
                     p.original_filename,
                     p.content_type,
-                    p.uploaded_at
-                FROM photos AS p
-                JOIN jobs AS j ON j.lead_id = p.lead_id
+                    p.uploaded_at,
+                    p.contractor_id AS photo_contractor_id
+                FROM jobs AS j
+                LEFT JOIN photos AS p
+                  ON p.lead_id = j.lead_id
+                 AND (
+                     p.contractor_id IS NULL
+                     OR p.contractor_id = j.contractor_id
+                 )
+                 AND (
+                     p.job_id IS NULL
+                     OR p.job_id = j.id
+                 )
                 WHERE j.job_id = %s
                   AND j.contractor_id = %s
-                  AND (
-                      p.contractor_id IS NULL
-                      OR p.contractor_id = j.contractor_id
-                  )
-                  AND (
-                      p.job_id IS NULL
-                      OR p.job_id = j.id
-                  )
                 ORDER BY p.uploaded_at, p.id
                 """,
-                (job_id, contractor["contractor_pk"]),
+                (job_id, contractor_pk),
             )
             rows = cursor.fetchall()
 
-    return [
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+
+    photos_locked = (
+        rows[0]["status"] != "JOB_IN_PROGRESS"
+        or rows[0]["photos_locked_at"] is not None
+    )
+
+    photos = [
         {
             "photo_id": row["photo_id"],
             "filename": row["original_filename"],
             "content_type": row["content_type"],
             "uploaded_at": row["uploaded_at"].isoformat(),
             "url": f"/contractor/photos/{row['photo_id']}",
+            "source": (
+                "homeowner"
+                if row["photo_contractor_id"] is None
+                else "contractor"
+            ),
+            "can_delete": (
+                row["photo_contractor_id"] == contractor_pk
+                and not photos_locked
+            ),
         }
         for row in rows
+        if row["photo_id"] is not None
     ]
 
+    return {
+        "photos_locked": photos_locked,
+        "photos": photos,
+    }
+
+@app.post("/contractor/jobs/{job_id}/photos", status_code=201)
+async def upload_contractor_job_photos(
+    job_id: str,
+    request: Request,
+    photos: list[UploadFile] = File(...),
+):
+    require_allowed_origin(request)
+    contractor = require_contractor(request)
+    contractor_pk = contractor["contractor_pk"]
+
+    # Verify ownership and current status using the public job ID.
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT j.id AS job_pk, j.lead_id AS lead_pk, j.status, j.photos_locked_at
+                FROM jobs AS j
+                WHERE j.job_id = %s
+                  AND j.contractor_id = %s
+                """,
+                (job_id, contractor_pk),
+            )
+            job = cursor.fetchone()
+
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+
+    if job["status"] != "JOB_IN_PROGRESS":
+        raise HTTPException(
+            status_code=409,
+            detail="Photo uploads are only allowed while the job is in progress.",
+        )
+
+    if job["photos_locked_at"] is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Photo uploads are locked for this job.",
+        )
+
+    if len(photos) > 15:
+        raise HTTPException(
+            status_code=422,
+            detail="You can upload a maximum of fifteen photos.",
+        )
+
+    # Validate every file before saving any files or database records.
+    max_photo_size = 5 * 1024 * 1024
+    uploaded_photos = []
+
+    for photo in photos:
+        if not photo.filename:
+            continue
+
+        content = await photo.read(max_photo_size + 1)
+
+        if len(content) > max_photo_size:
+            raise HTTPException(
+                status_code=422,
+                detail="Each photo must be 5 MB or smaller.",
+            )
+
+        try:
+            with Image.open(io.BytesIO(content)) as image:
+                image_format = image.format
+                image.verify()
+
+            # Normalize MPO images to a standard JPEG using the
+            # full-resolution first frame.
+            if image_format == "MPO":
+                with Image.open(io.BytesIO(content)) as image:
+                    image.seek(0)
+                    converted = io.BytesIO()
+                    image.convert("RGB").save(
+                        converted,
+                        format="JPEG",
+                        quality=95,
+                    )
+                    content = converted.getvalue()
+
+                if len(content) > max_photo_size:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Each photo must be 5 MB or smaller after conversion.",
+                    )
+
+                image_format = "JPEG"
+            else:
+                # Reopen and fully decode standard image formats.
+                with Image.open(io.BytesIO(content)) as image:
+                    image.load()
+
+            content_types = {
+                "JPEG": "image/jpeg",
+                "PNG": "image/png",
+                "WEBP": "image/webp",
+            }
+
+            content_type = content_types.get(image_format)
+
+            if content_type is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Photos must be valid JPEG, PNG, or WebP images.",
+                )
+
+        except (UnidentifiedImageError, OSError, SyntaxError, ValueError):
+            raise HTTPException(
+                status_code=422,
+                detail="Photos must be valid JPEG, PNG, or WebP images.",
+            )
+
+        original_filename = Path(photo.filename).name[:255]
+        stored_name = uuid.uuid4().hex
+
+        uploaded_photos.append(
+            (stored_name, content, content_type, original_filename)
+        )
+
+    if not uploaded_photos:
+        raise HTTPException(
+            status_code=422,
+            detail="Select at least one valid photo to upload.",
+        )
+
+    upload_dir = (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "uploads"
+    )
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files = []
+    saved_photos = []
+
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT status, photos_locked_at
+                    FROM jobs
+                    WHERE id = %s
+                    AND contractor_id = %s
+                    FOR UPDATE
+                    """,
+                    (job["job_pk"], contractor_pk),
+                )
+                locked_job = cursor.fetchone()
+
+                if locked_job is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Job not found.",
+                    )
+
+                if locked_job["status"] != "JOB_IN_PROGRESS":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Photo uploads are only allowed while the job is in progress.",
+                    )
+
+                if locked_job["photos_locked_at"] is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Photo uploads are locked for this job.",
+                    )
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS photo_count
+                    FROM photos
+                    WHERE job_id = %s
+                      AND contractor_id = %s
+                    """,
+                    (job["job_pk"], contractor_pk),
+                )
+                existing_photo_count = cursor.fetchone()["photo_count"]
+
+                if existing_photo_count + len(uploaded_photos) > 15:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "A maximum of fifteen photos is allowed per job. "
+                            f"This job already has {existing_photo_count} photos."
+                        ),
+                    )
+                for (
+                    stored_name,
+                    content,
+                    content_type,
+                    original_filename,
+                ) in uploaded_photos:
+                    file_path = upload_dir / stored_name
+                    file_path.write_bytes(content)
+                    saved_files.append(file_path)
+
+                    photo_id = f"EMGP-{stored_name[:16].upper()}"
+
+                    cursor.execute(
+                        """
+                        INSERT INTO photos (
+                            photo_id,
+                            lead_id,
+                            contractor_id,
+                            job_id,
+                            s3_key,
+                            original_filename,
+                            content_type
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING uploaded_at
+                        """,
+                        (
+                            photo_id,
+                            job["lead_pk"],
+                            contractor_pk,
+                            job["job_pk"],
+                            f"local/{stored_name}",
+                            original_filename,
+                            content_type,
+                        ),
+                    )
+                    record = cursor.fetchone()
+
+                    saved_photos.append(
+                        {
+                            "photo_id": photo_id,
+                            "filename": original_filename,
+                            "content_type": content_type,
+                            "uploaded_at": record["uploaded_at"].isoformat(),
+                            "url": f"/contractor/photos/{photo_id}",
+                        }
+                    )
+    except HTTPException:
+        for file_path in saved_files:
+            file_path.unlink(missing_ok=True)
+        raise
+    except Exception as error:
+        for file_path in saved_files:
+            file_path.unlink(missing_ok=True)
+
+        print(f"Contractor photo storage failed for job {job_id}.")
+        raise HTTPException(
+            status_code=500,
+            detail="Photo storage failed. Please try again later.",
+        ) from error
+
+    return saved_photos
+
+@app.delete("/contractor/jobs/{job_id}/photos/{photo_id}")
+def delete_contractor_job_photo(
+    job_id: str,
+    photo_id: str,
+    request: Request,
+):
+    require_allowed_origin(request)
+    contractor = require_contractor(request)
+    contractor_pk = contractor["contractor_pk"]
+
+    file_path = None
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    j.id AS job_pk,
+                    j.status,
+                    j.photos_locked_at,
+                    p.s3_key
+                FROM jobs AS j
+                JOIN photos AS p
+                  ON p.job_id = j.id
+                WHERE j.job_id = %s
+                  AND j.contractor_id = %s
+                  AND p.photo_id = %s
+                  AND p.contractor_id = %s
+                FOR UPDATE OF j, p
+                """,
+                (
+                    job_id,
+                    contractor_pk,
+                    photo_id,
+                    contractor_pk,
+                ),
+            )
+            photo = cursor.fetchone()
+
+            if photo is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Contractor photo not found.",
+                )
+
+            if (
+                photo["status"] != "JOB_IN_PROGRESS"
+                or photo["photos_locked_at"] is not None
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Photo deletion is locked for this job.",
+                )
+
+            s3_key = photo["s3_key"]
+
+            if not s3_key.startswith("local/"):
+                raise HTTPException(
+                    status_code=404,
+                    detail="Photo not found.",
+                )
+
+            stored_name = s3_key.removeprefix("local/")
+
+            if not stored_name or Path(stored_name).name != stored_name:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Photo not found.",
+                )
+
+            upload_dir = (
+                Path(__file__).resolve().parents[2]
+                / "data"
+                / "uploads"
+            )
+            file_path = upload_dir / stored_name
+
+            cursor.execute(
+                """
+                DELETE FROM photos
+                WHERE photo_id = %s
+                  AND job_id = %s
+                  AND contractor_id = %s
+                """,
+                (
+                    photo_id,
+                    photo["job_pk"],
+                    contractor_pk,
+                ),
+            )
+
+            if cursor.rowcount != 1:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Contractor photo not found.",
+                )
+
+    # Remove only the EMG-managed stored file.
+    # The original file on the contractor's device is untouched.
+    file_path.unlink(missing_ok=True)
+
+    return {"message": "Photo deleted successfully."}
 
 @app.get("/contractor/photos/{photo_id}")
 def contractor_photo(
