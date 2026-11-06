@@ -13,6 +13,7 @@ from app.services.collections import (
     record_collection,
 )
 from app.services.payment_agreements import (
+    AgreementConflictError,
     AgreementJobNotFoundError,
     InvalidAgreementError,
     create_payment_agreement,
@@ -41,7 +42,11 @@ class PaymentAgreementRequest(BaseModel):
     plan_start_date: date | None = None
     final_due_date: date | None = None
     custom_schedule: list[dict[str, Any]] | None = None
-
+    down_payment_amount: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
+    down_payment_due_date: date | None = None
+    installment_count: int | None = Field(default=None, gt=0)
 
 def _authenticated_contractor(request: Request):
     allowed_origin = os.getenv("EMG_ALLOWED_ORIGIN")
@@ -109,6 +114,9 @@ def create_job_payment_agreement(
             account_id=contractor["account_id"],
             arrangement_type=body.arrangement_type,
             invoice_total=body.invoice_total,
+            down_payment_amount=body.down_payment_amount,
+            down_payment_due_date=body.down_payment_due_date,
+            installment_count=body.installment_count,
             schedule_type=body.schedule_type,
             installment_amount=body.installment_amount,
             final_installment_amount=body.final_installment_amount,
@@ -118,6 +126,8 @@ def create_job_payment_agreement(
         )
     except AgreementJobNotFoundError:
         raise HTTPException(status_code=404, detail="Job not found.")
+    except AgreementConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error))
     except InvalidAgreementError as error:
         raise HTTPException(status_code=422, detail=str(error))
     except ValueError as error:

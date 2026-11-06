@@ -79,6 +79,7 @@ def update_job_status(
                     j.lead_id AS lead_pk,
                     j.contractor_id AS contractor_pk,
                     l.lead_id AS public_lead_id,
+                    l.customer_email,
                     c.contractor_id AS public_contractor_id,
                     c.company_name
                 FROM jobs j
@@ -128,10 +129,18 @@ def update_job_status(
                             )
                         ELSE photos_locked_at
                     END,
+                    notes_locked_at = CASE
+                        WHEN %s = 'JOB_COMPLETED'
+                            THEN COALESCE(
+                                notes_locked_at,
+                                CURRENT_TIMESTAMP
+                            )
+                        ELSE notes_locked_at
+                    END,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,
-                (new_status, new_status, record["job_pk"]),
+                (new_status, new_status, new_status, record["job_pk"]),
             )
 
             cursor.execute(
@@ -158,6 +167,51 @@ def update_job_status(
                     new_status,
                 ),
             )
+
+            if new_status == "JOB_COMPLETED":
+                # Snapshot the homeowner's email when the job is completed.
+                customer_email = (
+                    record["customer_email"] or ""
+                ).strip() or None
+
+                delivery_status = (
+                    "PENDING" if customer_email else "SKIPPED_NO_EMAIL"
+                )
+                retry_state = (
+                    "ACTIVE" if customer_email else "COMPLETE"
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO homeowner_review_invitations (
+                        job_id,
+                        customer_email,
+                        delivery_status,
+                        expires_at,
+                        retry_state,
+                        next_attempt_at
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        CURRENT_TIMESTAMP + INTERVAL '30 days',
+                        %s,
+                        CASE
+                            WHEN %s = 'ACTIVE'
+                                THEN CURRENT_TIMESTAMP
+                            ELSE NULL
+                        END
+                    )
+                    """,
+                    (
+                        record["job_pk"],
+                        customer_email,
+                        delivery_status,
+                        retry_state,
+                        retry_state,
+                    ),
+                )
 
             winning_contractors = None
             alert_queued = False

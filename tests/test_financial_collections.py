@@ -221,6 +221,60 @@ def financial_job(monkeypatch):
 
         client.close()
 
+@pytest.fixture
+def revision_admin():
+    """Create an administrator record for payment-agreement revision tests."""
+    username = f"revision-test-{secrets.token_hex(6)}"
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO admin_users (username, password_hash)
+                VALUES (%s, %s)
+                RETURNING id
+                """,
+                (username, "test-only-password-hash"),
+            )
+            admin_id = cursor.fetchone()["id"]
+
+    return {
+        "admin_id": admin_id,
+        "username": username,
+    }
+
+@pytest.fixture
+def authenticated_revision_admin(
+    financial_job,
+    revision_admin,
+    monkeypatch,
+):
+    """Provide a test client authenticated as the revision administrator."""
+    admin_id = revision_admin["admin_id"]
+    username = revision_admin["username"]
+
+    def fake_authenticate(token):
+        if token == "test-session":
+            return {
+                "admin_id": admin_id,
+                "username": username,
+            }
+        return None
+
+    monkeypatch.setattr(
+        "app.api.main.authenticate_admin_session",
+        fake_authenticate,
+    )
+
+    client = financial_job["client"]
+    client.cookies.set("emg_admin_session", "test-session")
+
+    return {
+        "client": client,
+        "admin_id": admin_id,
+        "username": username,
+        "job_id": financial_job["job_id"],
+    }
 
 def _report(client, job_id, amount, key, collected_at=None):
     if collected_at is None:
@@ -305,6 +359,87 @@ def test_collection_report_creates_fee_accrual_and_is_idempotent(financial_job):
             )
             assert cursor.fetchone()["count"] == 1
 
+def test_collection_uses_five_percent_job_fee_snapshot(financial_job):
+    client = financial_job["client"]
+    job_id = financial_job["job_id"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE jobs SET referral_fee_rate = 0.0500 WHERE job_id = %s",
+                (job_id,),
+            )
+
+    response = _report(client, job_id, "100.00", "five-percent-test")
+    assert response.status_code == 201, response.text
+    assert Decimal(response.json()["fee_amount"]) == Decimal("5.00")
+    assert Decimal(response.json()["cumulative_fee_after"]) == Decimal("5.00")
+
+
+def test_collection_records_zero_percent_job_fee_snapshot(financial_job):
+    client = financial_job["client"]
+    job_id = financial_job["job_id"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE jobs SET referral_fee_rate = 0.0000 WHERE job_id = %s",
+                (job_id,),
+            )
+
+    response = _report(client, job_id, "100.00", "zero-percent-test")
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert Decimal(body["fee_amount"]) == Decimal("0.00")
+    assert Decimal(body["cumulative_fee_after"]) == Decimal("0.00")
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT fee_rate, fee_amount
+                FROM job_fee_accruals
+                WHERE id = %s
+                """,
+                (body["fee_accrual_id"],),
+            )
+            accrual = cursor.fetchone()
+
+    assert accrual is not None
+    assert Decimal(accrual["fee_rate"]) == Decimal("0.0000")
+    assert Decimal(accrual["fee_amount"]) == Decimal("0.00")
+
+def test_collection_uses_accepted_job_rate_after_contractor_default_changes(
+    financial_job,
+):
+    client = financial_job["client"]
+    job_id = financial_job["job_id"]
+    contractor_pk = financial_job["contractor_pk"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE contractors
+                SET default_referral_fee_rate = 0.0500
+                WHERE id = %s
+                """,
+                (contractor_pk,),
+            )
+
+    response = _report(client, job_id, "100.00", "snapshot-rate-test")
+    assert response.status_code == 201, response.text
+    assert Decimal(response.json()["fee_amount"]) == Decimal("10.00")
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT referral_fee_rate FROM jobs WHERE job_id = %s",
+                (job_id,),
+            )
+            job = cursor.fetchone()
+
+    assert Decimal(job["referral_fee_rate"]) == Decimal("0.1000")
 
 def test_idempotency_key_cannot_be_reused_for_a_different_amount(financial_job):
     client = financial_job["client"]
@@ -626,6 +761,9 @@ def test_payment_plan_agreement_can_be_created(financial_job):
         json={
             "arrangement_type": "PAYMENT_PLAN",
             "invoice_total": "1250.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-10-14",
+            "installment_count": 5,
             "schedule_type": "MONTHLY",
             "installment_amount": "300.00",
             "final_installment_amount": "50.00",
@@ -682,7 +820,7 @@ def test_new_agreement_versions_preserve_previous_terms(financial_job):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT version, invoice_total
+                SELECT version, invoice_total, status
                 FROM job_payment_agreements
                 WHERE job_id = (
                     SELECT id FROM jobs WHERE job_id = %s
@@ -698,7 +836,364 @@ def test_new_agreement_versions_preserve_previous_terms(financial_job):
     assert Decimal(rows[0]["invoice_total"]) == Decimal("900.00")
     assert rows[1]["version"] == 2
     assert Decimal(rows[1]["invoice_total"]) == Decimal("1100.00")
+    assert rows[0]["status"] == "SUPERSEDED"
+    assert rows[1]["status"] == "PENDING_ACCEPTANCE"
 
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT event_type, related_record_id, details
+                FROM job_financial_audit_events
+                WHERE job_id = (
+                    SELECT id FROM jobs WHERE job_id = %s
+                )
+                  AND event_type IN (
+                      'PAYMENT_AGREEMENT_CREATED',
+                      'PAYMENT_AGREEMENT_SUPERSEDED'
+                  )
+                ORDER BY id
+                """,
+                (job_id,),
+            )
+            events = cursor.fetchall()
+
+    assert len(events) == 3
+    assert [event["event_type"] for event in events] == [
+        "PAYMENT_AGREEMENT_CREATED",
+        "PAYMENT_AGREEMENT_SUPERSEDED",
+        "PAYMENT_AGREEMENT_CREATED",
+    ]
+
+    assert events[1]["related_record_id"] == old_agreement["id"]
+    assert events[1]["details"]["superseded_agreement_id"] == old_agreement["id"]
+    assert events[1]["details"]["replacement_agreement_id"] == new_agreement["id"]
+    assert events[1]["details"]["replacement_version"] == 2
+
+def test_accepted_payment_agreement_cannot_be_replaced(financial_job):
+    client = financial_job["client"]
+    job_id = financial_job["job_id"]
+    url = f"/contractor/jobs/{job_id}/payment-agreement"
+
+    first = client.post(
+        url,
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "900.00",
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    agreement_id = first.json()["agreement"]["id"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE job_payment_agreements
+                SET status = 'ACCEPTED',
+                    accepted_at = CURRENT_TIMESTAMP,
+                    accepted_by_account_id = %s
+                WHERE id = %s
+                """,
+                (financial_job["account_id"], agreement_id),
+            )
+
+    replacement = client.post(
+        url,
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1100.00",
+        },
+    )
+
+    assert replacement.status_code == 409, replacement.text
+    assert "accepted payment agreement cannot be replaced" in (
+        replacement.json()["detail"].lower()
+    )
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, version, status
+                FROM job_payment_agreements
+                WHERE job_id = (
+                    SELECT id FROM jobs WHERE job_id = %s
+                )
+                ORDER BY version
+                """,
+                (job_id,),
+            )
+            agreements = cursor.fetchall()
+
+    assert len(agreements) == 1
+    assert agreements[0]["id"] == agreement_id
+    assert agreements[0]["version"] == 1
+    assert agreements[0]["status"] == "ACCEPTED"
+
+def test_admin_can_revise_accepted_payment_agreement(
+    financial_job,
+    revision_admin,
+    monkeypatch,
+):
+    client = financial_job["client"]
+    job_id = financial_job["job_id"]
+    admin_id = revision_admin["admin_id"]
+    admin_username = revision_admin["username"]
+
+    def fake_authenticate(token):
+        if token == "test-session":
+            return {
+                "admin_id": admin_id,
+                "username": admin_username,
+            }
+        return None
+
+    monkeypatch.setattr(
+        "app.api.main.authenticate_admin_session",
+        fake_authenticate,
+    )
+
+    client.cookies.set("emg_admin_session", "test-session")
+
+    # Create the original agreement as the contractor.
+    first = client.post(
+        f"/contractor/jobs/{job_id}/payment-agreement",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "900.00",
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    original_id = first.json()["agreement"]["id"]
+
+    # Mark the original agreement accepted.
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE job_payment_agreements
+                SET status = 'ACCEPTED',
+                    accepted_at = CURRENT_TIMESTAMP,
+                    accepted_by_account_id = %s
+                WHERE id = %s
+                RETURNING accepted_at, accepted_by_account_id
+                """,
+                (financial_job["account_id"], original_id),
+            )
+            original_acceptance = cursor.fetchone()
+
+    assert original_acceptance["accepted_at"] is not None
+    assert (
+        original_acceptance["accepted_by_account_id"]
+        == financial_job["account_id"]
+    )
+
+    # Revise the agreement as an administrator.
+    response = client.post(
+        f"/admin/jobs/{job_id}/payment-agreement/revise",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1200.00",
+            "reason": "Updated agreement terms approved by EMG.",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+
+    new_agreement = response.json()["agreement"]
+    new_id = new_agreement["id"]
+
+    assert new_id != original_id
+    assert new_agreement["version"] == 2
+    assert new_agreement["status"] == "ADMIN_REVISED"
+    assert new_agreement["invoice_total"] == "1200.00"
+    assert response.json()["supersedes_agreement_id"] == original_id
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    version,
+                    status,
+                    accepted_at,
+                    accepted_by_account_id
+                FROM job_payment_agreements
+                WHERE id = %s
+                """,
+                (original_id,),
+            )
+            old_agreement = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    version,
+                    status,
+                    created_by_account_id,
+                    created_by_admin_user_id,
+                    admin_revision_reason,
+                    admin_revised_at,
+                    accepted_at,
+                    accepted_by_account_id,
+                    supersedes_agreement_id
+                FROM job_payment_agreements
+                WHERE id = %s
+                """,
+                (new_id,),
+            )
+            revised_agreement = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT
+                    actor_type,
+                    actor_account_id,
+                    event_type,
+                    related_record_id,
+                    details
+                FROM job_financial_audit_events
+                WHERE job_id = (
+                    SELECT id FROM jobs WHERE job_id = %s
+                )
+                  AND event_type = 'PAYMENT_AGREEMENT_ADMIN_REVISED'
+                """,
+                (job_id,),
+            )
+            audit_event = cursor.fetchone()
+
+    # The original acceptance evidence must remain intact.
+    assert old_agreement["status"] == "SUPERSEDED"
+    assert old_agreement["accepted_at"] == original_acceptance["accepted_at"]
+    assert (
+        old_agreement["accepted_by_account_id"]
+        == original_acceptance["accepted_by_account_id"]
+    )
+
+    # The administrator-created agreement must not claim contractor acceptance.
+    assert revised_agreement["status"] == "ADMIN_REVISED"
+    assert revised_agreement["version"] == 2
+    assert revised_agreement["created_by_account_id"] is None
+    assert revised_agreement["created_by_admin_user_id"] == admin_id
+    assert revised_agreement["admin_revision_reason"] == (
+        "Updated agreement terms approved by EMG."
+    )
+    assert revised_agreement["admin_revised_at"] is not None
+    assert revised_agreement["accepted_at"] is None
+    assert revised_agreement["accepted_by_account_id"] is None
+    assert revised_agreement["supersedes_agreement_id"] == original_id
+
+    # The revision must be auditable and attributable to the administrator.
+    assert audit_event is not None
+    assert audit_event["actor_type"] == "EMG"
+    assert audit_event["actor_account_id"] is None
+    assert audit_event["event_type"] == "PAYMENT_AGREEMENT_ADMIN_REVISED"
+    assert audit_event["related_record_id"] == new_id
+    assert audit_event["details"]["admin_id"] == admin_id
+    assert audit_event["details"]["admin_username"] == admin_username
+    assert audit_event["details"]["reason"] == (
+        "Updated agreement terms approved by EMG."
+    )
+    assert audit_event["details"]["previous_agreement_id"] == original_id
+    assert audit_event["details"]["new_agreement_id"] == new_id
+    assert audit_event["details"]["version"] == 2
+
+def test_admin_agreement_revision_requires_authentication(financial_job):
+    response = financial_job["client"].post(
+        f"/admin/jobs/{financial_job['job_id']}/payment-agreement/revise",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1200.00",
+            "reason": "Updated terms.",
+        },
+    )
+
+    assert response.status_code == 401
+
+def test_admin_agreement_revision_rejects_disallowed_origin(
+    authenticated_revision_admin,
+):
+    response = authenticated_revision_admin["client"].post(
+        f"/admin/jobs/{authenticated_revision_admin['job_id']}/payment-agreement/revise",
+        headers={"Origin": "https://unauthorized.example"},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1200.00",
+            "reason": "Updated terms.",
+        },
+    )
+
+    assert response.status_code == 403
+
+def test_admin_cannot_revise_nonexistent_payment_agreement(
+    authenticated_revision_admin,
+):
+    response = authenticated_revision_admin["client"].post(
+        f"/admin/jobs/{authenticated_revision_admin['job_id']}/payment-agreement/revise",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1200.00",
+            "reason": "Updated terms.",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "no existing payment agreement" in response.json()["detail"].lower()
+
+def test_admin_cannot_revise_superseded_payment_agreement(
+    authenticated_revision_admin,
+):
+    client = authenticated_revision_admin["client"]
+    job_id = authenticated_revision_admin["job_id"]
+
+    # Create an agreement.
+    first = client.post(
+        f"/contractor/jobs/{job_id}/payment-agreement",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "900.00",
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    agreement_id = first.json()["agreement"]["id"]
+
+    # Simulate the agreement having been superseded.
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE job_payment_agreements
+                SET status = 'SUPERSEDED'
+                WHERE id = %s
+                """,
+                (agreement_id,),
+            )
+
+    response = client.post(
+        f"/admin/jobs/{job_id}/payment-agreement/revise",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1200.00",
+            "reason": "Updated terms.",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "current state" in response.json()["detail"].lower()
 
 def test_payment_agreement_rejects_invalid_schedule(financial_job):
     response = financial_job["client"].post(
@@ -707,6 +1202,9 @@ def test_payment_agreement_rejects_invalid_schedule(financial_job):
         json={
             "arrangement_type": "PAYMENT_PLAN",
             "invoice_total": "1000.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-10-14",
+            "installment_count": 2,
             "schedule_type": "YEARLY",
             "installment_amount": "100.00",
             "plan_start_date": "2026-10-15",
@@ -743,6 +1241,9 @@ def test_custom_payment_schedule_accepts_matching_installments(financial_job):
         json={
             "arrangement_type": "PAYMENT_PLAN",
             "invoice_total": "1000.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-10-14",
+            "installment_count": 2,
             "schedule_type": "CUSTOM",
             "installment_amount": "500.00",
             "final_installment_amount": "500.00",
@@ -768,6 +1269,9 @@ def test_custom_payment_schedule_rejects_incorrect_total(financial_job):
         json={
             "arrangement_type": "PAYMENT_PLAN",
             "invoice_total": "1000.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-10-14",
+            "installment_count": 2,
             "schedule_type": "CUSTOM",
             "installment_amount": "500.00",
             "plan_start_date": "2026-10-15",
@@ -780,7 +1284,7 @@ def test_custom_payment_schedule_rejects_incorrect_total(financial_job):
     )
 
     assert response.status_code == 422, response.text
-    assert "add up to the invoice total" in response.json()["detail"]
+    assert "invoice balance after the down payment" in response.json()["detail"]
 
 
 def test_custom_payment_schedule_rejects_duplicate_dates(financial_job):
@@ -790,6 +1294,9 @@ def test_custom_payment_schedule_rejects_duplicate_dates(financial_job):
         json={
             "arrangement_type": "PAYMENT_PLAN",
             "invoice_total": "1000.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-10-14",
+            "installment_count": 2,
             "schedule_type": "CUSTOM",
             "installment_amount": "500.00",
             "plan_start_date": "2026-10-15",

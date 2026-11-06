@@ -6,8 +6,6 @@ from psycopg.types.json import Jsonb
 
 from app.database.connection import get_connection
 
-
-FEE_RATE = Decimal("0.10")
 FEE_CAP = Decimal("5000.00")
 CENT = Decimal("0.01")
 
@@ -78,7 +76,7 @@ def record_collection(
                 # Find the job only within the authenticated contractor's account.
                 cursor.execute(
                     """
-                    SELECT id, lead_id, job_id
+                    SELECT id, lead_id, job_id, referral_fee_rate
                     FROM jobs
                     WHERE job_id = %s AND contractor_id = %s
                     """,
@@ -97,7 +95,7 @@ def record_collection(
 
                 cursor.execute(
                     """
-                    SELECT id, lead_id, job_id
+                    SELECT id, lead_id, job_id, referral_fee_rate
                     FROM jobs
                     WHERE id = %s AND contractor_id = %s
                     FOR UPDATE
@@ -171,8 +169,10 @@ def record_collection(
                     FEE_CAP - cumulative_before,
                 )
                 eligible_amount = amount
+                fee_rate = job["referral_fee_rate"]
+
                 fee_amount = min(
-                    _money(eligible_amount * FEE_RATE),
+                    _money(eligible_amount * fee_rate),
                     remaining_cap,
                 )
                 cumulative_after = _money(cumulative_before + fee_amount)
@@ -215,7 +215,7 @@ def record_collection(
                         collection["id"],
                         amount,
                         eligible_amount,
-                        FEE_RATE,
+                        fee_rate,
                         FEE_CAP,
                         cumulative_before,
                         cumulative_after,

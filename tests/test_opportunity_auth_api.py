@@ -4,6 +4,11 @@ from PIL import Image
 
 import pytest
 from fastapi.testclient import TestClient
+from datetime import timedelta
+from urllib.parse import parse_qs, urlparse
+
+from app.services import homeowner_review_delivery
+from app.services.review_tokens import review_token_matches
 
 import app.api.main as api
 from app.database.auth import provision_contractor_account
@@ -141,7 +146,51 @@ def opportunity_owned_by_contractor():
                             (db_lead_id,),
                         )
                         cursor.execute(
+                            """
+                            DELETE FROM homeowner_review_delivery_events
+                            WHERE invitation_id IN (
+                                SELECT id
+                                FROM homeowner_review_invitations
+                                WHERE job_id IN (
+                                    SELECT id FROM jobs WHERE lead_id = %s
+                                )
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            """
+                            DELETE FROM homeowner_review_invitations
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
                             "DELETE FROM jobs WHERE lead_id = %s",
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            """
+                            DELETE FROM homeowner_review_delivery_events
+                            WHERE invitation_id IN (
+                                SELECT id
+                                FROM homeowner_review_invitations
+                                WHERE job_id IN (
+                                    SELECT id FROM jobs WHERE lead_id = %s
+                                )
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            """
+                            DELETE FROM homeowner_review_invitations
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
                             (db_lead_id,),
                         )
                         cursor.execute(
@@ -1234,6 +1283,13 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
         json={"status": "JOB_COMPLETED"},
     )
     assert response.status_code == 200, response.text
+    # A repeated completion request must not create another invitation.
+    retry_response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "JOB_COMPLETED"},
+    )
+    assert retry_response.status_code == 200, retry_response.text
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -1246,10 +1302,38 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
                 (job_id,),
             )
             job = cursor.fetchone()
+            cursor.execute(
+                """
+                SELECT
+                    i.delivery_status,
+                    i.retry_state,
+                    i.customer_email,
+                    i.created_at,
+                    i.expires_at,
+                    i.next_attempt_at,
+                    l.customer_email AS lead_email,
+                    COUNT(*) OVER () AS invitation_count
+                FROM homeowner_review_invitations i
+                JOIN jobs j ON j.id = i.job_id
+                JOIN leads l ON l.id = j.lead_id
+                WHERE j.job_id = %s
+                """,
+                (job_id,),
+            )
+            invitation = cursor.fetchone()
 
     assert job is not None
     assert job["status"] == "JOB_COMPLETED"
     assert job["photos_locked_at"] is not None
+    assert invitation is not None
+    assert invitation["invitation_count"] == 1
+    assert invitation["customer_email"] == invitation["lead_email"]
+    assert invitation["delivery_status"] == "PENDING"
+    assert invitation["retry_state"] == "ACTIVE"
+    assert invitation["next_attempt_at"] is not None
+    assert invitation["expires_at"] - invitation["created_at"] == (
+        timedelta(days=30)
+    )
 
     # Save the original timestamp to verify it is never overwritten.
     locked_at = job["photos_locked_at"]
@@ -1278,7 +1362,592 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
     assert job["status"] == "PAYMENT_RECEIVED"
     assert job["photos_locked_at"] == locked_at
 
+def test_homeowner_review_invitation_sent_through_ses(
+    api_client,
+    opportunity_owned_by_contractor,
+    monkeypatch,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
 
+    response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "JOB_COMPLETED"},
+    )
+    assert response.status_code == 200, response.text
+
+    monkeypatch.setenv(
+        "EMG_REVIEW_TOKEN_SECRET",
+        "test-review-token-secret-for-automated-tests",
+    )
+    monkeypatch.setenv(
+        "EMG_REVIEW_EMAIL_FROM",
+        "reviews@example.com",
+    )
+    monkeypatch.setenv(
+        "EMG_REVIEW_BASE_URL",
+        "https://elitematchgroup.com/review",
+    )
+    monkeypatch.setenv("EMG_SES_REGION", "us-west-2")
+
+    captured = {}
+
+    class FakeSES:
+        def send_email(self, **kwargs):
+            captured.update(kwargs)
+            return {"MessageId": "fake-ses-message-123"}
+
+    def fake_boto_client(service, **kwargs):
+        assert service == "ses"
+        assert kwargs["region_name"] == "us-west-2"
+        return FakeSES()
+
+    monkeypatch.setattr(
+        homeowner_review_delivery.boto3,
+        "client",
+        fake_boto_client,
+    )
+
+    result = (
+        homeowner_review_delivery.deliver_homeowner_review_invitations(
+            batch_size=1
+        )
+    )
+
+    assert result["claimed_count"] == 1
+    assert result["sent_count"] == 1
+    assert result["failed_count"] == 0
+    assert result["paused_invitation_ids"] == []
+    assert result["claim_lost_invitation_ids"] == []
+
+    assert captured["Source"] == "reviews@example.com"
+    assert len(captured["Destination"]["ToAddresses"]) == 1
+    assert captured["Destination"]["ToAddresses"][0].endswith(
+        "@example.com"
+    )
+
+    email_text = captured["Message"]["Body"]["Text"]["Data"]
+    review_url = next(
+        line
+        for line in email_text.splitlines()
+        if line.startswith("https://")
+    )
+    token = parse_qs(urlparse(review_url).query)["token"][0]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    i.id,
+                    i.delivery_status,
+                    i.retry_state,
+                    i.attempts,
+                    i.token_hash,
+                    i.email_sent_at,
+                    i.provider_message_id,
+                    i.claimed_until,
+                    i.next_attempt_at
+                FROM homeowner_review_invitations i
+                JOIN jobs j ON j.id = i.job_id
+                WHERE j.job_id = %s
+                """,
+                (job_id,),
+            )
+            invitation = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT event_type
+                FROM homeowner_review_delivery_events
+                WHERE invitation_id = (
+                    SELECT i.id
+                    FROM homeowner_review_invitations i
+                    JOIN jobs j ON j.id = i.job_id
+                    WHERE j.job_id = %s
+                )
+                ORDER BY id
+                """,
+                (job_id,),
+            )
+            events = [
+                row["event_type"]
+                for row in cursor.fetchall()
+            ]
+
+    assert invitation is not None
+    assert invitation["delivery_status"] == "SENT"
+    assert invitation["retry_state"] == "COMPLETE"
+    assert invitation["attempts"] == 1
+    assert invitation["email_sent_at"] is not None
+    assert invitation["provider_message_id"] == "fake-ses-message-123"
+    assert invitation["claimed_until"] is None
+    assert invitation["next_attempt_at"] is None
+    assert review_token_matches(token, invitation["token_hash"])
+
+    assert events == [
+        "ATTEMPT_STARTED",
+        "ATTEMPT_SUCCEEDED",
+        "COMPLETED",
+    ]
+
+
+def test_homeowner_review_invitation_pauses_after_five_failures(
+    api_client,
+    opportunity_owned_by_contractor,
+    monkeypatch,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "JOB_COMPLETED"},
+    )
+    assert response.status_code == 200, response.text
+
+    monkeypatch.setenv(
+        "EMG_REVIEW_TOKEN_SECRET",
+        "test-review-token-secret-for-automated-tests",
+    )
+    monkeypatch.setenv(
+        "EMG_REVIEW_EMAIL_FROM",
+        "reviews@example.com",
+    )
+    monkeypatch.setenv(
+        "EMG_REVIEW_BASE_URL",
+        "https://elitematchgroup.com/review",
+    )
+    monkeypatch.setenv("EMG_SES_REGION", "us-west-2")
+
+    class FailingSES:
+        def send_email(self, **kwargs):
+            raise RuntimeError("Simulated SES delivery failure")
+
+    def fake_boto_client(service, **kwargs):
+        assert service == "ses"
+        return FailingSES()
+
+    monkeypatch.setattr(
+        homeowner_review_delivery.boto3,
+        "client",
+        fake_boto_client,
+    )
+
+    for attempt in range(1, 6):
+        result = (
+            homeowner_review_delivery.deliver_homeowner_review_invitations(
+                batch_size=1
+            )
+        )
+
+        assert result["claimed_count"] == 1
+        assert result["sent_count"] == 0
+        assert result["failed_count"] == 1
+        assert result["failed_invitations"][0]["failure_streak"] == attempt
+
+        if attempt < 5:
+            assert result["paused_invitation_ids"] == []
+
+            # Make the next retry immediately eligible.
+            with get_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE homeowner_review_invitations i
+                        SET next_attempt_at = CURRENT_TIMESTAMP
+                        FROM jobs j
+                        WHERE i.job_id = j.id
+                          AND j.job_id = %s
+                        """,
+                        (job_id,),
+                    )
+        else:
+            assert result["paused_invitation_ids"] == [
+                result["failed_invitations"][0]["invitation_id"]
+            ]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    i.delivery_status,
+                    i.retry_state,
+                    i.attempts,
+                    i.failure_streak,
+                    i.paused_at,
+                    i.next_attempt_at,
+                    i.claimed_until,
+                    i.last_error
+                FROM homeowner_review_invitations i
+                JOIN jobs j ON j.id = i.job_id
+                WHERE j.job_id = %s
+                """,
+                (job_id,),
+            )
+            invitation = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT event_type, COUNT(*) AS event_count
+                FROM homeowner_review_delivery_events
+                WHERE invitation_id = (
+                    SELECT i.id
+                    FROM homeowner_review_invitations i
+                    JOIN jobs j ON j.id = i.job_id
+                    WHERE j.job_id = %s
+                )
+                GROUP BY event_type
+                """,
+                (job_id,),
+            )
+            events = {
+                row["event_type"]: row["event_count"]
+                for row in cursor.fetchall()
+            }
+
+    assert invitation is not None
+    assert invitation["delivery_status"] == "FAILED"
+    assert invitation["retry_state"] == "PAUSED"
+    assert invitation["attempts"] == 5
+    assert invitation["failure_streak"] == 5
+    assert invitation["paused_at"] is not None
+    assert invitation["next_attempt_at"] is None
+    assert invitation["claimed_until"] is None
+    assert "Simulated SES delivery failure" in invitation["last_error"]
+
+    assert events == {
+        "ATTEMPT_STARTED": 5,
+        "ATTEMPT_FAILED": 5,
+        "PAUSED": 1,
+    }
+
+def test_homeowner_review_invitation_can_be_resumed_and_stopped(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "JOB_COMPLETED"},
+    )
+    assert response.status_code == 200, response.text
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT i.id
+                FROM homeowner_review_invitations i
+                JOIN jobs j ON j.id = i.job_id
+                WHERE j.job_id = %s
+                """,
+                (job_id,),
+            )
+            invitation_id = cursor.fetchone()["id"]
+
+            cursor.execute(
+                """
+                UPDATE homeowner_review_invitations
+                SET retry_state = 'PAUSED',
+                    delivery_status = 'FAILED',
+                    attempts = 5,
+                    failure_streak = 5,
+                    paused_at = CURRENT_TIMESTAMP,
+                    next_attempt_at = NULL,
+                    claimed_until = CURRENT_TIMESTAMP + INTERVAL '1 minute'
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+
+    result = homeowner_review_delivery.resume_homeowner_review_invitation(
+        invitation_id=invitation_id,
+        admin_id=None,
+        reason="  Reviewed SES configuration  ",
+    )
+
+    assert result["invitation_id"] == invitation_id
+    assert result["retry_state"] == "ACTIVE"
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    retry_state,
+                    failure_streak,
+                    paused_at,
+                    next_attempt_at,
+                    claimed_until,
+                    retry_control_admin_id,
+                    retry_control_reason
+                FROM homeowner_review_invitations
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+            invitation = cursor.fetchone()
+
+    assert invitation["retry_state"] == "ACTIVE"
+    assert invitation["failure_streak"] == 0
+    assert invitation["paused_at"] is None
+    assert invitation["next_attempt_at"] is not None
+    assert invitation["claimed_until"] is None
+    assert invitation["retry_control_admin_id"] is None
+    assert invitation["retry_control_reason"] == "Reviewed SES configuration"
+
+    result = homeowner_review_delivery.stop_homeowner_review_invitation(
+        invitation_id=invitation_id,
+        admin_id=None,
+        reason="Administrator stopped automatic retries",
+    )
+
+    assert result["invitation_id"] == invitation_id
+    assert result["retry_state"] == "STOPPED"
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    retry_state,
+                    stopped_at,
+                    paused_at,
+                    next_attempt_at,
+                    claimed_until,
+                    retry_control_reason
+                FROM homeowner_review_invitations
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+            invitation = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT event_type, admin_user_id, details
+                FROM homeowner_review_delivery_events
+                WHERE invitation_id = %s
+                  AND event_type IN ('RESUMED', 'STOPPED')
+                ORDER BY id
+                """,
+                (invitation_id,),
+            )
+            events = cursor.fetchall()
+
+    assert invitation["retry_state"] == "STOPPED"
+    assert invitation["stopped_at"] is not None
+    assert invitation["paused_at"] is None
+    assert invitation["next_attempt_at"] is None
+    assert invitation["claimed_until"] is None
+    assert invitation["retry_control_reason"] == (
+        "Administrator stopped automatic retries"
+    )
+
+    assert [event["event_type"] for event in events] == [
+        "RESUMED",
+        "STOPPED",
+    ]
+    assert all(event["admin_user_id"] is None for event in events)
+    assert events[0]["details"]["reason"] == "Reviewed SES configuration"
+    assert events[1]["details"]["reason"] == (
+        "Administrator stopped automatic retries"
+    )
+
+    with pytest.raises(
+        homeowner_review_delivery.ReviewInvitationConflictError,
+        match="Only paused invitations can be resumed",
+    ):
+        homeowner_review_delivery.resume_homeowner_review_invitation(
+            invitation_id=invitation_id,
+            admin_id=None,
+            reason="Attempt to resume stopped invitation",
+        )
+
+
+def test_homeowner_review_invitation_expiration_preserves_submitted_and_delivery_state(
+    api_client,
+    opportunity_owned_by_contractor,
+):
+    data = opportunity_owned_by_contractor
+    job_id = _accept_test_job(api_client, data)
+    _set_test_job_in_progress(api_client, job_id)
+
+    response = api_client.patch(
+        f"/jobs/{job_id}/status",
+        headers={"Origin": TEST_ORIGIN},
+        json={"status": "JOB_COMPLETED"},
+    )
+    assert response.status_code == 200, response.text
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT i.id
+                FROM homeowner_review_invitations i
+                JOIN jobs j ON j.id = i.job_id
+                WHERE j.job_id = %s
+                """,
+                (job_id,),
+            )
+            invitation_id = cursor.fetchone()["id"]
+
+            cursor.execute(
+                """
+                UPDATE homeowner_review_invitations
+                SET created_at = CURRENT_TIMESTAMP - INTERVAL '31 days',
+                    expires_at = CURRENT_TIMESTAMP - INTERVAL '1 day',
+                    submitted_at = CURRENT_TIMESTAMP,
+                    retry_state = 'COMPLETE',
+                    delivery_status = 'SENT',
+                    email_sent_at = CURRENT_TIMESTAMP,
+                    next_attempt_at = NULL,
+                    claimed_until = NULL
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+
+    # Submitted invitations must not expire.
+    result = homeowner_review_delivery.expire_homeowner_review_invitations()
+
+    assert result["expired_count"] == 0
+    assert result["expired_invitation_ids"] == []
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT retry_state, delivery_status, submitted_at
+                FROM homeowner_review_invitations
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+            invitation = cursor.fetchone()
+
+    assert invitation["retry_state"] == "COMPLETE"
+    assert invitation["delivery_status"] == "SENT"
+    assert invitation["submitted_at"] is not None
+
+    # Once unsubmitted, the same overdue invitation should expire.
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE homeowner_review_invitations
+                SET submitted_at = NULL
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+
+    result = homeowner_review_delivery.expire_homeowner_review_invitations()
+
+    assert result["expired_count"] == 1
+    assert result["expired_invitation_ids"] == [invitation_id]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    retry_state,
+                    delivery_status,
+                    email_sent_at,
+                    next_attempt_at,
+                    claimed_until,
+                    paused_at,
+                    stopped_at
+                FROM homeowner_review_invitations
+                WHERE id = %s
+                """,
+                (invitation_id,),
+            )
+            invitation = cursor.fetchone()
+
+            cursor.execute(
+                """
+                SELECT event_type, attempt_number, failure_streak, details
+                FROM homeowner_review_delivery_events
+                WHERE invitation_id = %s
+                  AND event_type = 'EXPIRED'
+                """,
+                (invitation_id,),
+            )
+            expiration_event = cursor.fetchone()
+
+    assert invitation["retry_state"] == "EXPIRED"
+    assert invitation["delivery_status"] == "SENT"
+    assert invitation["email_sent_at"] is not None
+    assert invitation["next_attempt_at"] is None
+    assert invitation["claimed_until"] is None
+    assert invitation["paused_at"] is None
+    assert invitation["stopped_at"] is None
+
+    assert expiration_event is not None
+    assert expiration_event["attempt_number"] is None
+    assert expiration_event["failure_streak"] == 0
+    assert expiration_event["details"]["reason"] == (
+        "The 30-day review invitation deadline passed"
+    )
+
+
+def test_homeowner_review_invitation_admin_actions_validate_inputs():
+    with pytest.raises(ValueError, match="at least 3 characters"):
+        homeowner_review_delivery.resume_homeowner_review_invitation(
+            invitation_id=999999,
+            admin_id=None,
+            reason="  ",
+        )
+
+    with pytest.raises(ValueError, match="at least 3 characters"):
+        homeowner_review_delivery.stop_homeowner_review_invitation(
+            invitation_id=999999,
+            admin_id=None,
+            reason=" x ",
+        )
+
+    with pytest.raises(
+        homeowner_review_delivery.ReviewInvitationNotFoundError,
+        match="Review invitation not found",
+    ):
+        homeowner_review_delivery.resume_homeowner_review_invitation(
+            invitation_id=999999,
+            admin_id=None,
+            reason="Valid test reason",
+        )
+
+    with pytest.raises(
+        homeowner_review_delivery.ReviewInvitationNotFoundError,
+        match="Review invitation not found",
+    ):
+        homeowner_review_delivery.stop_homeowner_review_invitation(
+            invitation_id=999999,
+            admin_id=None,
+            reason="Valid test reason",
+        )
+
+    with pytest.raises(ValueError, match="Batch size"):
+        homeowner_review_delivery.expire_homeowner_review_invitations(
+            batch_size=0
+        )
+
+    with pytest.raises(ValueError, match="Batch size"):
+        homeowner_review_delivery.expire_homeowner_review_invitations(
+            batch_size=101
+        )
 
 def test_contractor_job_photo_upload_rejected_before_job_in_progress(
     api_client,

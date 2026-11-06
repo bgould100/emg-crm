@@ -10,6 +10,7 @@ MINIMUM_MATCH_SCORE = 70
 
 def route_opportunities_to_fill_slots(
     lead_id: str,
+    exclude_contractor_pk: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Create enough contractor opportunities to fill a lead's open bid slots.
@@ -86,6 +87,10 @@ def route_opportunities_to_fill_slots(
                 WHERE c.status = 'ACTIVE'
                   AND c.availability = 'AVAILABLE'
                   AND c.default_referral_fee_rate > 0
+                  AND (
+                      %s::bigint IS NULL
+                      OR c.id <> %s
+                  )
                   AND NOT EXISTS (
                       SELECT 1
                       FROM opportunities o
@@ -97,7 +102,11 @@ def route_opportunities_to_fill_slots(
                         )
                   )
                 """,
-                (lead["id"],),
+                (
+                    exclude_contractor_pk,
+                    exclude_contractor_pk,
+                    lead["id"],
+                ),
             )
             contractors = cursor.fetchall()
 

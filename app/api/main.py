@@ -5,6 +5,7 @@ import uuid
 from typing import Literal
 import re
 import io
+import traceback
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -51,7 +52,23 @@ from app.services.login_rate_limit import (
     record_login_failure,
 )
 
-from app.api.financial import router as financial_router
+from app.api.financial import (
+    PaymentAgreementRequest,
+    router as financial_router,
+)
+from app.services.payment_agreements import (
+    AgreementConflictError,
+    AgreementJobNotFoundError,
+    InvalidAgreementError,
+    revise_payment_agreement,
+)
+
+from app.services.homeowner_review_delivery import (
+    ReviewInvitationConflictError,
+    ReviewInvitationNotFoundError,
+    resume_homeowner_review_invitation,
+    stop_homeowner_review_invitation,
+)
 def normalize_us_phone(phone: str) -> str:
     """Validate a US phone number and normalize it to 10 digits."""
 
@@ -278,12 +295,15 @@ class ContractorInboxOpportunity(BaseModel):
     zip_code: str
     service_type: str
     description: str
-    requested_bid_count: int
+    budget_range: str | None = None
+    urgency: str | None = None
 
 
 class OpportunityDecision(BaseModel):
     decision: Literal["accept", "decline"]
 
+class ContractorJobNoteCreate(BaseModel):
+    note_text: str = Field(min_length=1, max_length=600)
 
 class JobStatusUpdate(BaseModel):
     status: Literal[
@@ -311,6 +331,8 @@ class ContractorJobResponse(BaseModel):
     zip_code: str
     service_type: str
     description: str
+    budget_range: str | None = None
+    urgency: str | None = None
     quoted_amount: float | None = None
     created_at: str
     updated_at: str
@@ -343,6 +365,8 @@ class AdminReasonRequest(BaseModel):
 class AdminExtendRequest(AdminReasonRequest):
     days: int = Field(ge=1, le=30)
 
+class AdminPaymentAgreementRevisionRequest(PaymentAgreementRequest):
+    reason: str = Field(min_length=3, max_length=1000)
 
 class AdminActionResponse(BaseModel):
     opportunity_id: str
@@ -810,7 +834,8 @@ def contractor_opportunity_inbox(request: Request):
                     l.zip_code,
                     l.service_type,
                     l.description,
-                    l.requested_bid_count
+                    l.budget_range,
+                    l.urgency
                 FROM opportunities AS o
                 JOIN leads AS l ON l.id = o.lead_id
                 JOIN contractors AS c ON c.id = o.contractor_id
@@ -860,7 +885,8 @@ def contractor_opportunity_detail(
                     l.zip_code,
                     l.service_type,
                     l.description,
-                    l.requested_bid_count
+                    l.budget_range,
+                    l.urgency
                 FROM opportunities AS o
                 JOIN leads AS l ON l.id = o.lead_id
                 JOIN contractors AS c ON c.id = o.contractor_id
@@ -1016,6 +1042,152 @@ def contractor_job_photos(
     return {
         "photos_locked": photos_locked,
         "photos": photos,
+    }
+
+@app.get("/contractor/jobs/{job_id}/notes")
+def contractor_job_notes(
+    job_id: str,
+    request: Request,
+):
+    contractor = require_contractor(request)
+    contractor_pk = contractor["contractor_pk"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    j.status,
+                    j.notes_locked_at,
+                    n.note_id,
+                    n.note_text,
+                    n.created_at,
+                    c.company_name,
+                    c.contact_name
+                FROM jobs AS j
+                LEFT JOIN job_notes AS n
+                    ON n.job_id = j.id
+                LEFT JOIN contractors AS c
+                    ON c.id = n.contractor_id
+                WHERE j.job_id = %s
+                  AND j.contractor_id = %s
+                ORDER BY n.created_at, n.id
+                """,
+                (job_id, contractor_pk),
+            )
+            rows = cursor.fetchall()
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+
+    notes_locked = (
+        rows[0]["status"] != "JOB_IN_PROGRESS"
+        or rows[0]["notes_locked_at"] is not None
+    )
+
+    notes = [
+        {
+            "note_id": row["note_id"],
+            "note_text": row["note_text"],
+            "created_at": row["created_at"].isoformat(),
+            "author_name": (
+                row["contact_name"] or row["company_name"]
+            ),
+        }
+        for row in rows
+        if row["note_id"] is not None
+    ]
+
+    return {
+        "notes_locked": notes_locked,
+        "notes": notes,
+    }
+
+@app.post("/contractor/jobs/{job_id}/notes", status_code=201)
+def add_contractor_job_note(
+    job_id: str,
+    note: ContractorJobNoteCreate,
+    request: Request,
+):
+    require_allowed_origin(request)
+    contractor = require_contractor(request)
+    contractor_pk = contractor["contractor_pk"]
+
+    note_text = note.note_text.strip()
+
+    if not note_text:
+        raise HTTPException(
+            status_code=422,
+            detail="Note cannot be empty.",
+        )
+
+    if len(note_text) > 600:
+        raise HTTPException(
+            status_code=422,
+            detail="Note cannot exceed 600 characters.",
+        )
+
+    note_id = f"EMGN-{uuid.uuid4().hex[:16].upper()}"
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, status, notes_locked_at
+                FROM jobs
+                WHERE job_id = %s
+                  AND contractor_id = %s
+                FOR UPDATE
+                """,
+                (job_id, contractor_pk),
+            )
+            locked_job = cursor.fetchone()
+
+            if locked_job is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Job not found.",
+                )
+
+            if locked_job["status"] != "JOB_IN_PROGRESS":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Notes can only be added while the job is in progress.",
+                )
+
+            if locked_job["notes_locked_at"] is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Notes are locked for this job.",
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO job_notes (
+                    note_id,
+                    job_id,
+                    contractor_id,
+                    note_text
+                )
+                VALUES (%s, %s, %s, %s)
+                RETURNING note_id, note_text, created_at
+                """,
+                (
+                    note_id,
+                    locked_job["id"],
+                    contractor_pk,
+                    note_text,
+                ),
+            )
+            saved_note = cursor.fetchone()
+
+    return {
+        "note_id": saved_note["note_id"],
+        "note_text": saved_note["note_text"],
+        "created_at": saved_note["created_at"].isoformat(),
     }
 
 @app.post("/contractor/jobs/{job_id}/photos", status_code=201)
@@ -1574,13 +1746,9 @@ def admin_job_photos(job_id: str, request: Request):
                     p.uploaded_at::text AS uploaded_at
                 FROM photos AS p
                 JOIN jobs AS j
-                  ON j.id = p.job_id
-                  OR (
-                      p.job_id IS NULL
-                      AND p.lead_id = j.lead_id
-                  )
+                ON j.id = p.job_id
+                AND j.contractor_id = p.contractor_id
                 WHERE j.job_id = %s
-                  AND p.lead_id = j.lead_id
                 ORDER BY p.uploaded_at, p.id
             """, (job_id,))
             rows = cur.fetchall()
@@ -1594,6 +1762,51 @@ def admin_job_photos(job_id: str, request: Request):
             "url": f"/admin/photos/{row['photo_id']}",
         }
         for row in rows
+    ]
+
+@app.get("/admin/jobs/{job_id}/notes")
+def admin_job_notes(job_id: str, request: Request):
+    require_admin(request)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    j.job_id,
+                    n.note_id,
+                    n.note_text,
+                    n.created_at::text AS created_at,
+                    c.company_name,
+                    c.contact_name
+                FROM jobs AS j
+                LEFT JOIN job_notes AS n
+                    ON n.job_id = j.id
+                LEFT JOIN contractors AS c
+                    ON c.id = n.contractor_id
+                WHERE j.job_id = %s
+                ORDER BY n.created_at, n.id
+            """, (job_id,))
+            rows = cur.fetchall()
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+
+    return [
+        {
+            "note_id": row["note_id"],
+            "note_text": row["note_text"],
+            "created_at": row["created_at"],
+            "company_name": row["company_name"],
+            "contact_name": row["contact_name"],
+            "author_name": (
+                row["contact_name"] or row["company_name"]
+            ),
+        }
+        for row in rows
+        if row["note_id"] is not None
     ]
 
 @app.get("/admin/leads/{lead_id}/photos")
@@ -1671,7 +1884,8 @@ def admin_list_leads(request: Request):
             cur.execute("""
                 SELECT lead_id, zip_code, service_type, description, budget,
                        urgency, requested_bid_count, status, customer_name,
-                       customer_email, customer_phone, created_at, updated_at
+                       customer_email, customer_phone, created_at, updated_at,
+                       routing_error, routing_failed_at
                 FROM leads
                 ORDER BY created_at DESC
                 LIMIT 200
@@ -1795,6 +2009,116 @@ def admin_contractor_activity(
             }
 
 
+@app.post(
+    "/admin/jobs/{job_id}/payment-agreement/revise",
+    status_code=201,
+)
+def admin_revise_payment_agreement(
+    job_id: str,
+    body: AdminPaymentAgreementRevisionRequest,
+    request: Request,
+):
+    admin = require_admin(request)
+    require_allowed_origin(request)
+
+    try:
+        result = revise_payment_agreement(
+            public_job_id=job_id,
+            admin_id=admin["admin_id"],
+            admin_username=admin["username"],
+            reason=body.reason,
+            arrangement_type=body.arrangement_type,
+            invoice_total=body.invoice_total,
+            down_payment_amount=body.down_payment_amount,
+            down_payment_due_date=body.down_payment_due_date,
+            installment_count=body.installment_count,
+            schedule_type=body.schedule_type,
+            installment_amount=body.installment_amount,
+            final_installment_amount=body.final_installment_amount,
+            plan_start_date=body.plan_start_date,
+            final_due_date=body.final_due_date,
+            custom_schedule=body.custom_schedule,
+        )
+    except AgreementJobNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+    except AgreementConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+    except (InvalidAgreementError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        )
+
+    return result
+
+@app.post("/admin/review-invitations/{invitation_id}/resume")
+def admin_resume_homeowner_review_invitation(
+    invitation_id: int,
+    body: AdminReasonRequest,
+    request: Request,
+):
+    admin = require_admin(request)
+    require_allowed_origin(request)
+
+    try:
+        return resume_homeowner_review_invitation(
+            invitation_id=invitation_id,
+            admin_id=admin["admin_id"],
+            reason=body.reason,
+        )
+    except ReviewInvitationNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+    except ReviewInvitationConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        )
+
+
+@app.post("/admin/review-invitations/{invitation_id}/stop")
+def admin_stop_homeowner_review_invitation(
+    invitation_id: int,
+    body: AdminReasonRequest,
+    request: Request,
+):
+    admin = require_admin(request)
+    require_allowed_origin(request)
+
+    try:
+        return stop_homeowner_review_invitation(
+            invitation_id=invitation_id,
+            admin_id=admin["admin_id"],
+            reason=body.reason,
+        )
+    except ReviewInvitationNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+    except ReviewInvitationConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        )
 
 @app.get("/admin/jobs")
 def admin_list_jobs(request: Request):
@@ -2206,13 +2530,45 @@ async def submit_homeowner_request(
             lead["lead_id"]
         )
         routing_status = "completed"
-    except Exception:
+
+        # Clear any previous routing failure after a successful run.
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE leads
+                    SET routing_error = NULL,
+                        routing_failed_at = NULL
+                    WHERE lead_id = %s
+                    """,
+                    (lead["lead_id"],),
+                )
+
+    except Exception as error:
         opportunities = []
         routing_status = "requires_review"
+
+        error_message = f"{type(error).__name__}: {error}"
+
+        # Persist the failure so administrators can recover this lead.
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE leads
+                    SET routing_error = %s,
+                        routing_failed_at = CURRENT_TIMESTAMP
+                    WHERE lead_id = %s
+                    """,
+                    (error_message, lead["lead_id"]),
+                )
+
         print(
             f"Automatic matching failed for lead "
-            f"{lead['lead_id']}."
+            f"{lead['lead_id']}: {error_message}",
+            flush=True,
         )
+        traceback.print_exc()
 
     return {
         "message": (
@@ -2326,6 +2682,18 @@ def route_lead(
             ),
         )
 
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE leads
+                SET routing_error = NULL,
+                    routing_failed_at = NULL
+                WHERE lead_id = %s
+                """,
+                (lead_id,),
+            )
+
     return opportunities
 
 
@@ -2412,6 +2780,8 @@ def list_contractor_jobs(request: Request):
                     l.zip_code,
                     l.service_type,
                     l.description,
+                    l.budget_range,
+                    l.urgency,
                     l.customer_name,
                     l.customer_phone,
                     l.customer_email,
@@ -2456,6 +2826,8 @@ def contractor_job_detail(
                     l.zip_code,
                     l.service_type,
                     l.description,
+                    l.budget_range,
+                    l.urgency,
                     l.customer_name,
                     l.customer_phone,
                     l.customer_email,

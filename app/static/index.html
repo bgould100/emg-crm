@@ -292,7 +292,327 @@
       outline: 3px solid #367bf5;
       outline-offset: 2px;
     }
+  /* ===== Contractor Portal: dark EMG theme ===== */
 
+  :root {
+    --navy: #151618;
+    --blue: #d6b56d;
+    --light: #101112;
+    --border: #34363a;
+    --text: #f2f1ed;
+    --muted: #a4a5a8;
+    --green: #86c7a0;
+    --red: #f08a83;
+    --surface: #202225;
+  }
+
+  body {
+    background: var(--light);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  .topbar {
+    background: #151618;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    color: var(--blue);
+    letter-spacing: 0.04em;
+  }
+
+  .brand small {
+    color: var(--muted);
+  }
+
+  h1, h2, h3 {
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+
+  p, label {
+    color: var(--muted);
+  }
+
+  .muted, .small {
+    color: var(--muted);
+  }
+
+  .card {
+    background: linear-gradient(145deg, #191a1c, #17181a);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+
+  .tabs {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px 8px 0 0;
+  }
+
+  .tab:hover {
+    color: var(--text);
+    background: #202225;
+  }
+
+  .tab.active {
+    color: var(--blue);
+    background: #202225;
+    border-color: var(--border);
+    border-bottom-color: #202225;
+  }
+
+  input, select, textarea {
+    color: var(--text);
+    background: #111214;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color-scheme: dark;
+  }
+
+  input::placeholder, textarea::placeholder {
+    color: #77797d;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(214, 181, 109, 0.13);
+  }
+
+  .btn {
+    color: #151618;
+    background: var(--blue);
+    border: 1px solid var(--blue);
+    border-radius: 8px;
+    font-weight: 650;
+    transition: background 0.15s ease, transform 0.15s ease;
+  }
+
+  .btn:hover {
+    background: #e2c783;
+    transform: translateY(-1px);
+  }
+
+  .btn.secondary {
+    color: var(--text);
+    background: #202225;
+    border-color: var(--border);
+  }
+
+  .btn.secondary:hover {
+    background: #292b2f;
+  }
+
+  .btn.danger {
+    color: var(--red);
+    background: rgba(240, 138, 131, 0.09);
+    border-color: rgba(240, 138, 131, 0.35);
+  }
+
+  .btn.success {
+    color: var(--green);
+    background: rgba(134, 199, 160, 0.09);
+    border-color: rgba(134, 199, 160, 0.35);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .status {
+    color: var(--text);
+    background: #202225;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .notice {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .notice.error {
+    color: var(--red);
+    background: rgba(240, 138, 131, 0.08);
+    border-color: rgba(240, 138, 131, 0.3);
+  }
+
+  .notice.info {
+    color: var(--blue);
+    background: rgba(214, 181, 109, 0.08);
+    border-color: rgba(214, 181, 109, 0.25);
+  }
+
+  .notice.good {
+    color: var(--green);
+    background: rgba(134, 199, 160, 0.08);
+    border-color: rgba(134, 199, 160, 0.3);
+  }
+
+  .item {
+    background: #191a1c;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .empty {
+    color: var(--muted);
+  }
+
+  .footer {
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+
+  .photo-gallery,
+  .job-photo-section,
+  .job-photo-item,
+  .job-photo-preview-item {
+    background: #202225;
+    border-color: var(--border);
+  }
+
+  .photo-viewer {
+    background: #151618;
+    border: 1px solid var(--border);
+  }
+
+  .photo-viewer::backdrop {
+    background: rgba(0, 0, 0, 0.85);
+  }
+
+  .photo-viewer-close,
+  .photo-delete-button {
+    color: var(--red);
+    background: rgba(240, 138, 131, 0.1);
+    border-color: rgba(240, 138, 131, 0.35);
+  }
+
+  .file-picker-label {
+    color: var(--blue);
+    background: #202225;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .file-picker-label:hover {
+    background: #292b2f;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    color: #151618;
+    background: var(--blue);
+  }
+    /* Compact expandable My Jobs cards */
+  .job-card {
+    padding: 0;
+    margin: 10px 0;
+    overflow: hidden;
+  }
+  .job-card.job-card-quote {
+    border-color: #e5c56f;
+  }
+
+  .job-card.job-card-won {
+    border-color: #8ebeff;
+  }
+
+  .job-card.job-card-completed {
+    border-color: var(--green);
+  }
+
+  .job-card-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 15px;
+    cursor: pointer;
+  }
+
+  .job-card-summary:hover {
+    background: #202225;
+  }
+
+  .job-card-main {
+    min-width: 0;
+  }
+
+  .job-card-main h3 {
+    margin: 0 0 4px;
+    font-size: 1rem;
+  }
+
+  .job-card-homeowner {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .job-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .job-card-call {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--green);
+    text-decoration: none;
+    font-size: 1.15rem;
+  }
+
+  .job-card-call:hover {
+    background: rgba(134, 199, 160, 0.1);
+  }
+
+  .job-card-details {
+    padding: 14px 15px;
+    border-top: 1px solid var(--border);
+  }
+
+  .job-card-details[hidden] {
+    display: none;
+  }
+
+  .job-status-quote {
+    color: #e5c56f;
+    border-color: rgba(229, 197, 111, 0.4);
+    background: rgba(229, 197, 111, 0.1);
+  }
+
+  .job-status-won {
+    color: #8ebeff;
+    border-color: rgba(142, 190, 255, 0.4);
+    background: rgba(142, 190, 255, 0.1);
+  }
+
+  .job-status-completed {
+    color: var(--green);
+    border-color: rgba(134, 199, 160, 0.4);
+    background: rgba(134, 199, 160, 0.1);
+  }
   </style>
 </head>
 <body>
@@ -567,6 +887,29 @@
       return String(value ?? "—").replaceAll("_", " ");
     }
 
+    function formatBudget(value) {
+      const labels = {
+        prefer_not_to_say: "Prefer not to say",
+        under_1000: "Under $1,000",
+        "1000_2500": "$1,000-$2,500",
+        "2500_5000": "$2,500-$5,000",
+        "5000_7500": "$5,000-$7,500",
+        "7500_10000": "$7,500-$10,000",
+        "10000_plus": "$10,000+"
+      };
+      return labels[value] || "Not specified";
+    }
+
+    function formatTimeframe(value) {
+      const labels = {
+        "1-2 days": "1-2 days",
+        "3-7 days": "3-7 days",
+        "1-2 weeks": "1-2 weeks",
+        "3+ weeks": "3+ weeks"
+      };
+      return labels[value] || "Not specified";
+    }
+
     function el(tag, className, text) {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -631,9 +974,10 @@ async function openOpportunityDetails(opportunityId) {
       ["Service", pretty(item.service_type)],
       ["ZIP code", item.zip_code],
       ["Description", item.description || "No description provided."],
+      ["Budget", formatBudget(item.budget_range)],
+      ["Timeframe", formatTimeframe(item.urgency)],
       ["Opportunity status", pretty(item.status)],
       ["Match score", item.match_score == null ? "Unavailable" : `${item.match_score}%`],
-      ["Requested bids", item.requested_bid_count],
       ["Received", item.sent_at ? new Date(item.sent_at).toLocaleString() : "Unavailable"],
       ["Expires", item.expires_at ? new Date(item.expires_at).toLocaleString() : "No expiration listed"],
       ["Expiration paused", item.expiration_paused ? "Yes" : "No"]
@@ -989,6 +1333,129 @@ async function loadJobPhotoGalleries(container, jobId, onLockState = null) {
   }
 }
 
+async function loadJobNotes(container, jobId) {
+  container.replaceChildren();
+
+  try {
+    const data = await request(
+      `/contractor/jobs/${encodeURIComponent(jobId)}/notes`
+    );
+
+    const notes = Array.isArray(data?.notes) ? data.notes : [];
+    const notesLocked = Boolean(data?.notes_locked);
+
+    const section = el("section", "job-notes-section");
+    section.append(el("h3", "", "Job Notes"));
+
+    const history = el("div", "job-notes-history");
+
+    if (!notes.length) {
+      history.append(
+        el("p", "muted", "No notes have been recorded for this job.")
+      );
+    }
+
+    for (const note of notes) {
+      const item = el("article", "job-note-item");
+
+      const author = el(
+        "p",
+        "muted small",
+        note.author_name || "Contractor"
+      );
+
+      const timestamp = el(
+        "p",
+        "muted small",
+        note.created_at
+          ? new Date(note.created_at).toLocaleString()
+          : "Timestamp unavailable"
+      );
+
+      const noteText = el("p", "job-note-text");
+      noteText.textContent = note.note_text || "";
+
+      item.append(author, timestamp, noteText);
+      history.append(item);
+    }
+
+    section.append(history);
+
+    if (notesLocked) {
+      section.append(
+        el(
+          "p",
+          "notice",
+          "Notes are locked because this job is not in progress."
+        )
+      );
+    } else {
+      const form = el("form", "job-note-form");
+
+      const label = el("label", "", "Add a note (maximum 600 characters)");
+      const textarea = el("textarea");
+      textarea.name = "note_text";
+      textarea.rows = 3;
+      textarea.maxLength = 600;
+      textarea.required = true;
+      textarea.placeholder = "Record an update about this job...";
+      textarea.setAttribute("aria-label", "Job note");
+
+      const submitButton = el("button", "btn", "Add Note");
+      submitButton.type = "submit";
+
+      const feedback = el("p", "muted small");
+
+      form.append(label, textarea, submitButton, feedback);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const noteText = textarea.value.trim();
+
+        if (!noteText) {
+          feedback.textContent = "Enter a note before submitting.";
+          return;
+        }
+
+        if (noteText.length > 600) {
+          feedback.textContent =
+            "Notes cannot exceed 600 characters.";
+          return;
+        }
+
+        submitButton.disabled = true;
+        feedback.textContent = "Saving note...";
+
+        try {
+          await request(
+            `/contractor/jobs/${encodeURIComponent(jobId)}/notes`,
+            {
+              method: "POST",
+              body: JSON.stringify({ note_text: noteText })
+            }
+          );
+
+          await loadJobNotes(container, jobId);
+          message("Job note added successfully.", "good");
+        } catch (error) {
+          feedback.textContent = error.message;
+          submitButton.disabled = false;
+        }
+      });
+
+      section.append(form);
+    }
+
+    container.append(section);
+  } catch (error) {
+    container.replaceChildren(
+      el("p", "notice error", error.message)
+    );
+    console.error("Unable to load job notes:", error);
+  }
+}
+
     async function loadOpportunities() {
       const list = $("opportunitiesList");
       renderEmpty(list, "Loading opportunities…");
@@ -1011,8 +1478,13 @@ async function loadJobPhotoGalleries(container, jobId, onLockState = null) {
           card.append(el("p", "", descriptionPreview));
 
           const meta = el("p", "muted small",
-            `Opportunity: ${item.opportunity_id} · Requested bids: ${item.requested_bid_count ?? "—"}`);
+            `Opportunity: ${item.opportunity_id}`);
           card.append(meta);
+
+          card.append(
+            el("p", "muted small", `Budget: ${formatBudget(item.budget_range)}`),
+            el("p", "muted small", `Timeframe: ${formatTimeframe(item.urgency)}`)
+          );
           if (item.expires_at) card.append(el("p", "muted small", `Expires: ${new Date(item.expires_at).toLocaleString()}`));
           const detailsButton = actionButton(
             "View Details",
@@ -1075,49 +1547,114 @@ async function loadJobPhotoGalleries(container, jobId, onLockState = null) {
     }
 
     function renderJob(job) {
-      const card = el("article", "item");
-      const top = el("div", "between mobile-stack");
-      top.append(el("h3", "", `${pretty(job.service_type)} · ${job.zip_code || "ZIP unavailable"}`));
-      top.append(el("span", "status", pretty(job.status)));
-      card.append(top);
+      const card = el("article", "item job-card");
+      if (job.status === "QUOTE_IN_PROGRESS") {
+        card.classList.add("job-card-quote");
+      } else if (job.status === "BID_WON") {
+        card.classList.add("job-card-won");
+      } else if (job.status === "JOB_COMPLETED") {
+        card.classList.add("job-card-completed");
+      }
+
+      const summary = el("div", "job-card-summary");
+      summary.setAttribute("role", "button");
+      summary.setAttribute("tabindex", "0");
+      summary.setAttribute("aria-expanded", "false");
+
+      const main = el("div", "job-card-main");
+      main.append(
+        el("h3", "", `${pretty(job.service_type)} · ${job.zip_code || "ZIP unavailable"}`)
+      );
+
+      const homeownerName = el("div", "job-card-homeowner", "Loading homeowner...");
+      main.append(homeownerName);
+
+      const actions = el("div", "job-card-actions");
+
+      const status = el("span", "status", pretty(job.status));
+
+      if (job.status === "QUOTE_IN_PROGRESS") {
+        status.classList.add("job-status-quote");
+      } else if (job.status === "BID_WON") {
+        status.classList.add("job-status-won");
+      } else if (job.status === "JOB_COMPLETED") {
+        status.classList.add("job-status-completed");
+      }
+
+      const callLink = el("a", "job-card-call", "☎");
+      callLink.hidden = true;
+      callLink.setAttribute("aria-label", "Call homeowner");
+      callLink.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+
+      actions.append(status, callLink);
+      summary.append(main, actions);
+
+      const details = el("div", "job-card-details");
+      details.hidden = true;
+
+      function toggleDetails() {
+        details.hidden = !details.hidden;
+        summary.setAttribute("aria-expanded", String(!details.hidden));
+      }
+
+      summary.addEventListener("click", toggleDetails);
+
+      summary.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggleDetails();
+        }
+      });
+
+      card.append(summary, details);
+
       const contactSection = createHomeownerContact({});
-      card.append(contactSection);
+      details.append(contactSection);
 
       void request(`/contractor/jobs/${encodeURIComponent(job.job_id)}`)
-        .then((details) => {
-            if (contactSection.isConnected) {
-                contactSection.replaceWith(createHomeownerContact(details));
-            }
+        .then((homeowner) => {
+          if (contactSection.isConnected) {
+            contactSection.replaceWith(createHomeownerContact(homeowner));
+          }
+
+          homeownerName.textContent =
+            homeowner.customer_name || "Homeowner name unavailable";
+
+          if (homeowner.customer_phone) {
+            callLink.href =
+              `tel:${homeowner.customer_phone.replace(/[^\d+]/g, "")}`;
+            callLink.hidden = false;
+          }
         })
         .catch((error) => {
-            console.error(
-                `Unable to load homeowner contact for job ${job.job_id}:`,
-                error
-            );
+          console.error(
+            `Unable to load homeowner contact for job ${job.job_id}:`,
+            error
+          );
+          homeownerName.textContent = "Homeowner details unavailable";
         });
 
       const description = (job.description || "No description provided.").trim();
       const descriptionPreview = description.length > 200
         ? `${description.slice(0, 200).trimEnd()}…`
         : description;
-      card.append(el("p", "", descriptionPreview));
+      details.append(el("p", "", descriptionPreview));
+      details.append(
+        el("p", "", `Budget: ${formatBudget(job.budget_range)}`),
+        el("p", "", `Timeframe: ${formatTimeframe(job.urgency)}`)
+      );
 
-      card.append(el("p", "muted small",
+      details.append(el("p", "muted small",
         `Job ID: ${job.job_id} · Updated: ${job.updated_at ? new Date(job.updated_at).toLocaleString() : "—"}`));
 
       if (job.quoted_amount != null) {
-        card.append(el("p", "", `Quoted amount: $${Number(job.quoted_amount).toFixed(2)}`));
+        details.append(el("p", "", `Quoted amount: $${Number(job.quoted_amount).toFixed(2)}`));
       }
 
-      const detailsButton = actionButton(
-        "View Details",
-        "secondary",
-        () => openJobDetails(job.job_id)
-      );
-      card.append(detailsButton);
-
       const gallery = el("div", "job-photo-galleries");
-      card.append(gallery);
+      details.append(gallery);
 
       let uploadSection = null;
 
@@ -1240,7 +1777,7 @@ async function loadJobPhotoGalleries(container, jobId, onLockState = null) {
         );
 
         uploadSection.append(uploadForm);
-        card.append(uploadSection);
+        details.append(uploadSection);
 
         uploadForm.addEventListener("submit", async (event) => {
           event.preventDefault();
@@ -1296,6 +1833,11 @@ async function loadJobPhotoGalleries(container, jobId, onLockState = null) {
         }
       );
 
+      const notesContainer = el("div", "job-notes-container");
+      details.append(notesContainer);
+
+      void loadJobNotes(notesContainer, job.job_id);
+
       const form = el("form", "row");
       const select = el("select");
       select.setAttribute("aria-label", "New job status");
@@ -1332,7 +1874,7 @@ async function loadJobPhotoGalleries(container, jobId, onLockState = null) {
           save.disabled = false;
         }
       });
-      card.append(form);
+      details.append(form);
       return card;
     }
 

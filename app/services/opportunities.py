@@ -231,23 +231,36 @@ def respond_to_opportunity(
             lead_id = record["lead_id"]
 
     # The decision commits before replacement invitations are routed.
-    next_opportunities = route_opportunities_to_fill_slots(lead_id)
+    # Do not send a declined opportunity back to the same contractor.
+    next_opportunities = route_opportunities_to_fill_slots(
+        lead_id,
+        exclude_contractor_pk=(
+            record["contractor_pk"]
+            if decision == "decline"
+            else None
+        ),
+    )
 
     result["next_opportunities"] = next_opportunities
 
-    if next_opportunities:
+    if decision == "decline":
+        if next_opportunities:
+            count = len(next_opportunities)
+            result["message"] = (
+                "Opportunity declined successfully. "
+                f"Sent {count} replacement invitation"
+                f"{'s' if count != 1 else ''} to other contractors."
+            )
+        else:
+            result["message"] = "Opportunity declined successfully."
+
+    elif next_opportunities:
         count = len(next_opportunities)
         result["message"] = (
-            f"Opportunity {decision}ed successfully. "
+            "Opportunity accepted successfully. "
             f"Created {count} additional contractor "
             f"opportunit{'y' if count == 1 else 'ies'}."
         )
-    elif decision == "accept":
-        result["message"] = (
-            "Opportunity accepted successfully."
-        )
     else:
-        result["message"] = (
-            "Opportunity declined."
-        )
+        result["message"] = "Opportunity accepted successfully."
     return result

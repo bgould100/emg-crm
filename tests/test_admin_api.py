@@ -1,4 +1,4 @@
-
+from app.services import homeowner_review_delivery
 import app.api.main as api
 from fastapi.testclient import TestClient
 
@@ -635,3 +635,192 @@ def test_admin_retry_slot_routing_maps_service_errors(monkeypatch):
     assert "Opportunity not found" in missing.json()["detail"]
     assert conflict.status_code == 409
     assert "Slot has not been released" in conflict.json()["detail"]
+
+def test_review_invitation_admin_endpoints_reject_missing_and_invalid_sessions(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    calls = []
+
+    def fake_resume(**kwargs):
+        calls.append(("resume", kwargs))
+
+    def fake_stop(**kwargs):
+        calls.append(("stop", kwargs))
+
+    monkeypatch.setattr(api, "resume_homeowner_review_invitation", fake_resume)
+    monkeypatch.setattr(api, "stop_homeowner_review_invitation", fake_stop)
+
+    headers = {"Origin": "http://localhost:8000"}
+    body = {"reason": "Administrator reviewed delivery failures"}
+
+    for action in ("resume", "stop"):
+        url = f"/admin/review-invitations/123/{action}"
+
+        missing = client.post(url, headers=headers, json=body)
+        invalid = client.post(
+            url,
+            headers=headers,
+            cookies={"emg_admin_session": "invalid-session"},
+            json=body,
+        )
+
+        assert missing.status_code == 401
+        assert invalid.status_code == 401
+
+    assert calls == []
+
+
+def test_review_invitation_admin_endpoints_require_allowed_origin(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    calls = []
+
+    def fake_resume(**kwargs):
+        calls.append(("resume", kwargs))
+
+    def fake_stop(**kwargs):
+        calls.append(("stop", kwargs))
+
+    monkeypatch.setattr(api, "resume_homeowner_review_invitation", fake_resume)
+    monkeypatch.setattr(api, "stop_homeowner_review_invitation", fake_stop)
+
+    body = {"reason": "Administrator reviewed delivery failures"}
+
+    for action in ("resume", "stop"):
+        response = client.post(
+            f"/admin/review-invitations/123/{action}",
+            cookies=ADMIN_COOKIE,
+            headers={"Origin": "http://malicious.example"},
+            json=body,
+        )
+
+        assert response.status_code == 403
+
+    assert calls == []
+
+
+def test_review_invitation_admin_endpoints_call_services_with_admin_identity(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    calls = []
+
+    def fake_resume(**kwargs):
+        calls.append(("resume", kwargs))
+        return {
+            "invitation_id": 123,
+            "retry_state": "ACTIVE",
+            "message": "Review invitation retries have been resumed.",
+        }
+
+    def fake_stop(**kwargs):
+        calls.append(("stop", kwargs))
+        return {
+            "invitation_id": 456,
+            "retry_state": "STOPPED",
+            "message": "Automatic review invitation retries have been stopped.",
+        }
+
+    monkeypatch.setattr(api, "resume_homeowner_review_invitation", fake_resume)
+    monkeypatch.setattr(api, "stop_homeowner_review_invitation", fake_stop)
+
+    headers = {"Origin": "http://localhost:8000"}
+
+    resume = client.post(
+        "/admin/review-invitations/123/resume",
+        cookies=ADMIN_COOKIE,
+        headers=headers,
+        json={"reason": "Reviewed SES configuration"},
+    )
+
+    stop = client.post(
+        "/admin/review-invitations/456/stop",
+        cookies=ADMIN_COOKIE,
+        headers=headers,
+        json={"reason": "Administrator stopped automatic retries"},
+    )
+
+    assert resume.status_code == 200
+    assert resume.json()["retry_state"] == "ACTIVE"
+
+    assert stop.status_code == 200
+    assert stop.json()["retry_state"] == "STOPPED"
+
+    assert calls == [
+        (
+            "resume",
+            {
+                "invitation_id": 123,
+                "admin_id": 1,
+                "reason": "Reviewed SES configuration",
+            },
+        ),
+        (
+            "stop",
+            {
+                "invitation_id": 456,
+                "admin_id": 1,
+                "reason": "Administrator stopped automatic retries",
+            },
+        ),
+    ]
+
+
+def test_review_invitation_admin_endpoints_map_service_errors(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    def fake_resume(**kwargs):
+        if kwargs["invitation_id"] == 999:
+            raise homeowner_review_delivery.ReviewInvitationNotFoundError(
+                "Review invitation not found."
+            )
+        raise homeowner_review_delivery.ReviewInvitationConflictError(
+            "Only paused invitations can be resumed."
+        )
+
+    def fake_stop(**kwargs):
+        if kwargs["invitation_id"] == 999:
+            raise homeowner_review_delivery.ReviewInvitationNotFoundError(
+                "Review invitation not found."
+            )
+        raise homeowner_review_delivery.ReviewInvitationConflictError(
+            "Only active or paused invitations can be stopped."
+        )
+
+    monkeypatch.setattr(api, "resume_homeowner_review_invitation", fake_resume)
+    monkeypatch.setattr(api, "stop_homeowner_review_invitation", fake_stop)
+
+    headers = {"Origin": "http://localhost:8000"}
+
+    for action, expected_conflict in (
+        ("resume", "Only paused invitations can be resumed."),
+        ("stop", "Only active or paused invitations can be stopped."),
+    ):
+        missing = client.post(
+            f"/admin/review-invitations/999/{action}",
+            cookies=ADMIN_COOKIE,
+            headers=headers,
+            json={"reason": "Test service error mapping"},
+        )
+
+        conflict = client.post(
+            f"/admin/review-invitations/123/{action}",
+            cookies=ADMIN_COOKIE,
+            headers=headers,
+            json={"reason": "Test service error mapping"},
+        )
+
+        assert missing.status_code == 404
+        assert "not found" in missing.json()["detail"].lower()
+
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"] == expected_conflict

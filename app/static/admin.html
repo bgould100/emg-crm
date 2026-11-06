@@ -698,7 +698,9 @@
       });
 
     $("jobDetailsDialog").showModal();
+    void loadAdminLeadPhotos(job.lead_id, content);
     void loadAdminJobPhotos(job.job_id, content);
+    void loadAdminJobNotes(job.job_id, content);
   }
 
   async function loadAdminJobPhotos(jobId, container) {
@@ -706,7 +708,7 @@
     section.style.marginTop = "24px";
 
     const heading = document.createElement("h3");
-    heading.textContent = "Job photos";
+    heading.textContent = "Contractor photos";
     section.append(heading);
 
     const message = document.createElement("p");
@@ -720,7 +722,7 @@
       );
 
       if (!Array.isArray(photos) || photos.length === 0) {
-        message.textContent = "No photos attached to this job.";
+        message.textContent = "No contractor photos attached to this job.";
         return;
       }
 
@@ -756,6 +758,62 @@
       section.append(gallery);
     } catch (error) {
       message.textContent = `Could not load photos: ${error.message}`;
+    }
+  }
+
+  async function loadAdminJobNotes(jobId, container) {
+    const section = document.createElement("section");
+    section.style.marginTop = "24px";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Contractor job notes";
+    section.append(heading);
+
+    const message = document.createElement("p");
+    message.textContent = "Loading notes...";
+    section.append(message);
+    container.append(section);
+
+    try {
+      const notes = await api(
+        `/admin/jobs/${encodeURIComponent(jobId)}/notes`
+      );
+
+      if (!Array.isArray(notes) || notes.length === 0) {
+        message.textContent =
+          "No contractor notes have been recorded for this job.";
+        return;
+      }
+
+      message.remove();
+
+      for (const note of notes) {
+        const item = document.createElement("article");
+        item.style.marginBottom = "16px";
+        item.style.padding = "12px";
+        item.style.border = "1px solid var(--border)";
+        item.style.borderRadius = "8px";
+
+        const author = document.createElement("p");
+        author.className = "sub-cell";
+        author.textContent = note.author_name || "Contractor";
+
+        const timestamp = document.createElement("p");
+        timestamp.className = "sub-cell";
+        timestamp.textContent = note.created_at
+          ? new Date(note.created_at).toLocaleString()
+          : "Timestamp unavailable";
+
+        const text = document.createElement("p");
+        text.textContent = note.note_text || "";
+        text.style.whiteSpace = "pre-wrap";
+
+        item.append(author, timestamp, text);
+        section.append(item);
+      }
+    } catch (error) {
+      message.textContent =
+        `Could not load contractor notes: ${error.message}`;
     }
   }
 
@@ -839,7 +897,17 @@
         <td><div class="primary-cell">${escapeHtml(lead.customer_name || "Not provided")}</div><div class="sub-cell">${escapeHtml(lead.customer_email || "")}</div><div class="sub-cell">${escapeHtml(lead.customer_phone || "")}</div></td>
         <td>${lead.budget == null ? "Not specified" : escapeHtml(money(lead.budget))}</td>
         <td>${escapeHtml(lead.requested_bid_count ?? "—")}</td>
-        <td><span class="pill gold">${escapeHtml(lead.status || "UNKNOWN")}</span></td>
+        <td>
+          ${lead.routing_error ? `
+            <span class="pill red">ROUTING FAILED</span>
+            <div class="sub-cell">${escapeHtml(lead.routing_error)}</div>
+            <button
+              type="button"
+              class="btn btn-small retry-routing"
+              data-lead-id="${escapeHtml(lead.lead_id)}"
+            >Retry routing</button>
+          ` : `<span class="pill gold">${escapeHtml(lead.status || "UNKNOWN")}</span>`}
+        </td>
         <td>${escapeHtml(dateLabel(lead.created_at))}</td>
       </tr>
     `).join("") : '<tr><td colspan="7" class="empty">No matching leads found.</td></tr>';
@@ -1326,7 +1394,28 @@
 
   $("leadSearch").addEventListener("input", renderLeads);
 
-  $("leadsBody").addEventListener("click", (event) => {
+  $("leadsBody").addEventListener("click", async (event) => {
+    const retryButton = event.target.closest(".retry-routing");
+    if (retryButton) {
+      event.stopPropagation();
+      const leadId = retryButton.dataset.leadId;
+      retryButton.disabled = true;
+      retryButton.textContent = "Retrying...";
+
+      try {
+        await api(`/leads/${encodeURIComponent(leadId)}/route`, {
+          method: "POST"
+        });
+        globalMessage(`Routing succeeded for ${leadId}.`, "success");
+        await loadLeads();
+      } catch (error) {
+        globalMessage(error.message, "error");
+        retryButton.disabled = false;
+        retryButton.textContent = "Retry routing";
+      }
+      return;
+    }
+
     const row = event.target.closest("tr.lead-row");
     if (row) openAdminLeadDetails(row.dataset.leadId);
   });
