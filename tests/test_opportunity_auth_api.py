@@ -33,13 +33,14 @@ def api_client(monkeypatch):
 def opportunity_owned_by_contractor():
     """Create two contractors and an opportunity owned by Contractor A."""
     suffix = secrets.token_hex(5).upper()
+    test_specialty = f"Auth API Roofing {suffix}"
     lead_id = None
     contractor_ids = []
 
     try:
         lead = create_lead(
             zip_code="83814",
-            service_type="Auth API Roofing",
+            service_type=test_specialty,
             description="Temporary opportunity authorization test.",
             requested_bid_count=1,
             customer_name="Temporary Authorization Test",
@@ -57,7 +58,7 @@ def opportunity_owned_by_contractor():
                 company_name=f"EMG Auth Test {label} {suffix}",
                 email=email,
                 service_area=["83814"],
-                specialties=["Auth API Roofing"],
+                specialties=[test_specialty],
             )
             contractors.append(contractor)
             contractor_ids.append(contractor["contractor_id"])
@@ -67,7 +68,40 @@ def opportunity_owned_by_contractor():
                 email=email,
                 password=TEST_PASSWORD,
             )
-
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        c.contractor_id,
+                        c.status,
+                        c.availability,
+                        c.default_referral_fee_rate,
+                        c.service_area,
+                        c.specialties,
+                        l.zip_code,
+                        l.service_type
+                    FROM contractors c
+                    CROSS JOIN leads l
+                    WHERE l.lead_id = %s
+                    AND c.contractor_id = ANY(%s)
+                    """,
+                    (lead_id, contractor_ids),
+                )
+                print("ROUTING DIAGNOSTIC:", cursor.fetchall())
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT opportunity_id, contractor_id, status, slot_released
+                    FROM opportunities
+                    WHERE lead_id = (
+                        SELECT id FROM leads WHERE lead_id = %s
+                    )
+                    """,
+                    (lead_id,),
+                )
+                print("EXISTING OPPORTUNITIES:", cursor.fetchall())
         opportunities = route_opportunities_to_fill_slots(lead_id)
 
         opportunity_a = next(
@@ -160,6 +194,15 @@ def opportunity_owned_by_contractor():
                         )
                         cursor.execute(
                             """
+                            DELETE FROM job_financial_audit_events
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            """
                             DELETE FROM homeowner_review_invitations
                             WHERE job_id IN (
                                 SELECT id FROM jobs WHERE lead_id = %s
@@ -167,6 +210,72 @@ def opportunity_owned_by_contractor():
                             """,
                             (db_lead_id,),
                         )
+                        cursor.execute(
+                            """
+                            DELETE FROM homeowner_review_discrepancies
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+
+                        cursor.execute(
+                            """
+                            DELETE FROM job_installments
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+
+                        cursor.execute(
+                            """
+                            DELETE FROM job_payment_agreements
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            """
+                            SELECT
+                                j.job_id,
+                                a.id AS fee_accrual_id,
+                                a.accrual_status,
+                                a.accrued_at,
+                                ia.obligation_id
+                            FROM jobs j
+                            JOIN job_fee_accruals a
+                              ON a.job_id = j.id
+                            LEFT JOIN contractor_invoice_obligation_accruals ia
+                              ON ia.fee_accrual_id = a.id
+                            WHERE j.lead_id = %s
+                            """,
+                            (db_lead_id,),
+                        )
+                        print("TEST LEAD INVOICE ASSIGNMENTS:", cursor.fetchall())
+                        cursor.execute(
+                            """
+                            DELETE FROM job_fee_accruals
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+                        cursor.execute(
+                            """
+                            DELETE FROM job_collections
+                            WHERE job_id IN (
+                                SELECT id FROM jobs WHERE lead_id = %s
+                            )
+                            """,
+                            (db_lead_id,),
+                        )
+
                         cursor.execute(
                             "DELETE FROM jobs WHERE lead_id = %s",
                             (db_lead_id,),
@@ -985,6 +1094,23 @@ def _set_test_job_in_progress(api_client, job_id):
         )
         assert response.status_code == 200, response.text
 
+def _approve_test_payment_agreement(api_client, data, job_id):
+    response = api_client.post(
+        f"/contractor/jobs/{job_id}/payment-agreement",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAID_IN_FULL",
+            "invoice_total": "1000.00",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    accept_response = api_client.post(
+        f"/contractor/jobs/{job_id}/payment-agreement/accept",
+        headers={"Origin": TEST_ORIGIN},
+    )
+    assert accept_response.status_code == 200, accept_response.text
+
 def test_contractor_can_delete_own_job_photo_while_in_progress(
     api_client,
     opportunity_owned_by_contractor,
@@ -1275,6 +1401,7 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
     data = opportunity_owned_by_contractor
     job_id = _accept_test_job(api_client, data)
     _set_test_job_in_progress(api_client, job_id)
+    _approve_test_payment_agreement(api_client, data, job_id)
 
     # Completing the job should create the permanent photo lock.
     response = api_client.patch(
@@ -1308,6 +1435,7 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
                     i.delivery_status,
                     i.retry_state,
                     i.customer_email,
+                    i.token_hash,
                     i.created_at,
                     i.expires_at,
                     i.next_attempt_at,
@@ -1334,6 +1462,8 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
     assert invitation["expires_at"] - invitation["created_at"] == (
         timedelta(days=30)
     )
+    assert invitation["token_hash"] is not None
+    assert len(invitation["token_hash"].strip()) == 64
 
     # Save the original timestamp to verify it is never overwritten.
     locked_at = job["photos_locked_at"]
@@ -1370,6 +1500,7 @@ def test_homeowner_review_invitation_sent_through_ses(
     data = opportunity_owned_by_contractor
     job_id = _accept_test_job(api_client, data)
     _set_test_job_in_progress(api_client, job_id)
+    _approve_test_payment_agreement(api_client, data, job_id)
 
     response = api_client.patch(
         f"/jobs/{job_id}/status",
@@ -1502,6 +1633,7 @@ def test_homeowner_review_invitation_pauses_after_five_failures(
     data = opportunity_owned_by_contractor
     job_id = _accept_test_job(api_client, data)
     _set_test_job_in_progress(api_client, job_id)
+    _approve_test_payment_agreement(api_client, data, job_id)
 
     response = api_client.patch(
         f"/jobs/{job_id}/status",
@@ -1634,6 +1766,7 @@ def test_homeowner_review_invitation_can_be_resumed_and_stopped(
     data = opportunity_owned_by_contractor
     job_id = _accept_test_job(api_client, data)
     _set_test_job_in_progress(api_client, job_id)
+    _approve_test_payment_agreement(api_client, data, job_id)
 
     response = api_client.patch(
         f"/jobs/{job_id}/status",
@@ -1782,6 +1915,7 @@ def test_homeowner_review_invitation_expiration_preserves_submitted_and_delivery
     data = opportunity_owned_by_contractor
     job_id = _accept_test_job(api_client, data)
     _set_test_job_in_progress(api_client, job_id)
+    _approve_test_payment_agreement(api_client, data, job_id)
 
     response = api_client.patch(
         f"/jobs/{job_id}/status",

@@ -105,6 +105,16 @@ jobs:
             -f migrations/021_homeowner_review_delivery_retries.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/022_homeowner_review_expiration.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/023_homeowner_review_expiration_audit.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/024_payment_agreement_emg_review.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/025_allow_larger_final_installment.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/026_job_level_invoice_obligations.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/027_contractor_invoice_delivery.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f migrations/028_homeowner_review_unknown_delivery.sql
 
       - name: Run test suite
         run: python -m pytest -q tests

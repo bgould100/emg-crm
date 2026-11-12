@@ -824,3 +824,179 @@ def test_review_invitation_admin_endpoints_map_service_errors(monkeypatch):
 
         assert conflict.status_code == 409
         assert conflict.json()["detail"] == expected_conflict
+def test_review_invitation_resolve_requires_admin_and_allowed_origin(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    calls = []
+
+    def fake_resolve(**kwargs):
+        calls.append(kwargs)
+        return {"invitation_id": 123}
+
+    monkeypatch.setattr(api, "resolve_homeowner_review_invitation", fake_resolve)
+
+    url = "/admin/review-invitations/123/resolve"
+    body = {
+        "action": "RESEND",
+        "reason": "Administrator verified the delivery situation",
+    }
+
+    missing_session = client.post(
+        url,
+        headers={"Origin": "http://localhost:8000"},
+        json=body,
+    )
+
+    invalid_origin = client.post(
+        url,
+        cookies=ADMIN_COOKIE,
+        headers={"Origin": "http://malicious.example"},
+        json=body,
+    )
+
+    assert missing_session.status_code == 401
+    assert invalid_origin.status_code == 403
+    assert calls == []
+
+
+def test_review_invitation_resolve_calls_service_with_admin_identity(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    calls = []
+
+    def fake_resolve(**kwargs):
+        calls.append(kwargs)
+        return {
+            "invitation_id": 123,
+            "delivery_status": "PENDING",
+            "retry_state": "ACTIVE",
+            "message": "Review invitation has been queued for resend.",
+        }
+
+    monkeypatch.setattr(api, "resolve_homeowner_review_invitation", fake_resolve)
+
+    response = client.post(
+        "/admin/review-invitations/123/resolve",
+        cookies=ADMIN_COOKIE,
+        headers={"Origin": "http://localhost:8000"},
+        json={
+            "action": "RESEND",
+            "reason": "Administrator verified the delivery situation",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["delivery_status"] == "PENDING"
+    assert response.json()["retry_state"] == "ACTIVE"
+
+    assert calls == [
+        {
+            "invitation_id": 123,
+            "admin_id": 1,
+            "action": "RESEND",
+            "reason": "Administrator verified the delivery situation",
+        }
+    ]
+
+
+def test_review_invitation_resolve_maps_service_errors(monkeypatch):
+    _enable_admin_session(monkeypatch)
+    monkeypatch.setenv("EMG_ALLOWED_ORIGIN", "http://localhost:8000")
+
+    def fake_resolve(**kwargs):
+        if kwargs["invitation_id"] == 999:
+            raise homeowner_review_delivery.ReviewInvitationNotFoundError(
+                "Review invitation not found."
+            )
+
+        if kwargs["invitation_id"] == 123:
+            raise homeowner_review_delivery.ReviewInvitationConflictError(
+                "Review invitation is not in an unknown delivery state."
+            )
+
+        raise ValueError("Administrator reason must contain at least 3 characters.")
+
+    monkeypatch.setattr(api, "resolve_homeowner_review_invitation", fake_resolve)
+
+    headers = {"Origin": "http://localhost:8000"}
+    cookies = ADMIN_COOKIE
+
+    missing = client.post(
+        "/admin/review-invitations/999/resolve",
+        cookies=cookies,
+        headers=headers,
+        json={"action": "RESEND", "reason": "Reviewed delivery"},
+    )
+
+    conflict = client.post(
+        "/admin/review-invitations/123/resolve",
+        cookies=cookies,
+        headers=headers,
+        json={"action": "RESEND", "reason": "Reviewed delivery"},
+    )
+
+    invalid = client.post(
+        "/admin/review-invitations/456/resolve",
+        cookies=cookies,
+        headers=headers,
+        json={"action": "RESEND", "reason": "Reviewed delivery"},
+    )
+
+    assert missing.status_code == 404
+    assert "not found" in missing.json()["detail"].lower()
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == (
+        "Review invitation is not in an unknown delivery state."
+    )
+
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == (
+        "Administrator reason must contain at least 3 characters."
+    )
+
+
+def test_review_invitation_list_endpoint_requires_admin(monkeypatch):
+    calls = []
+
+    def fake_list():
+        calls.append(True)
+        return []
+
+    monkeypatch.setattr(api, "list_homeowner_review_invitations", fake_list)
+
+    response = client.get("/admin/review-invitations")
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_review_invitation_list_endpoint_calls_service_with_admin(
+    monkeypatch,
+):
+    _enable_admin_session(monkeypatch)
+
+    calls = []
+
+    def fake_list():
+        calls.append(True)
+        return [{"id": 123, "delivery_status": "UNKNOWN"}]
+
+    monkeypatch.setattr(api, "list_homeowner_review_invitations", fake_list)
+
+    response = client.get(
+        "/admin/review-invitations",
+        cookies=ADMIN_COOKIE,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"id": 123, "delivery_status": "UNKNOWN"}
+    ]
+    assert calls == [True]

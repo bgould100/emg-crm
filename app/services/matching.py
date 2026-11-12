@@ -69,6 +69,15 @@ def route_opportunities_to_fill_slots(
                 - counts["accepted"]
                 - counts["pending"]
             )
+            print(
+                "ROUTING STATE:",
+                {
+                    "requested_bid_count": lead["requested_bid_count"],
+                    "accepted": counts["accepted"],
+                    "pending": counts["pending"],
+                    "open_slots": open_slots,
+                },
+            )
 
             if open_slots <= 0:
                 return []
@@ -109,6 +118,7 @@ def route_opportunities_to_fill_slots(
                 ),
             )
             contractors = cursor.fetchall()
+            print("ROUTING CONTRACTORS:", contractors)
 
             matches = []
 
@@ -144,7 +154,7 @@ def route_opportunities_to_fill_slots(
                 if specialty_match and zip_match and score >= MINIMUM_MATCH_SCORE:
                     matches.append((score, contractor))
 
-
+            print("ROUTING MATCHES:", matches)
             # Highest score first; company name breaks ties consistently.
             matches.sort(
                 key=lambda item: (

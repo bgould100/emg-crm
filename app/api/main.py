@@ -6,11 +6,18 @@ from typing import Literal
 import re
 import io
 import traceback
+from decimal import Decimal
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictBool,
+    StrictInt,
+    model_validator,
+)
 from PIL import Image, UnidentifiedImageError
 
 from app.database.auth import (
@@ -60,15 +67,35 @@ from app.services.payment_agreements import (
     AgreementConflictError,
     AgreementJobNotFoundError,
     InvalidAgreementError,
+    get_admin_payment_agreement,
     revise_payment_agreement,
+)
+
+from app.services.homeowner_reviews import (
+    InvalidHomeownerReviewError,
+    InvalidReviewTokenError,
+    ReviewAlreadySubmittedError,
+    ReviewExpiredError,
+    get_homeowner_review_detail,
+    list_homeowner_reviews,
+    submit_homeowner_review,
+    validate_homeowner_review_invitation,
 )
 
 from app.services.homeowner_review_delivery import (
     ReviewInvitationConflictError,
     ReviewInvitationNotFoundError,
+    list_homeowner_review_invitations,
+    resolve_homeowner_review_invitation,
     resume_homeowner_review_invitation,
     stop_homeowner_review_invitation,
 )
+
+from app.services.review_tokens import (
+    generate_review_token,
+    review_token_matches,
+)
+
 def normalize_us_phone(phone: str) -> str:
     """Validate a US phone number and normalize it to 10 digits."""
 
@@ -226,6 +253,14 @@ def homeowner_portal():
     frontend_path = Path(__file__).resolve().parent.parent / "static" / "homeowner.html"
     return FileResponse(frontend_path)
 
+@app.get("/homeowner/review", include_in_schema=False)
+def homeowner_review_portal():
+    frontend_path = (
+        Path(__file__).resolve().parent.parent
+        / "static"
+        / "homeowner_review.html"
+    )
+    return FileResponse(frontend_path)
 
 @app.get("/admin", include_in_schema=False)
 def admin_portal():
@@ -268,6 +303,13 @@ class ContractorCreate(BaseModel):
 class ContractorMatchingProfileUpdate(BaseModel):
     service_area: list[str] = Field(min_length=1, max_length=100)
     specialties: list[str] = Field(min_length=1, max_length=50)
+
+class ContractorReferralFeeRateUpdate(BaseModel):
+    referral_fee_rate: Decimal = Field(
+        ge=Decimal("0"),
+        le=Decimal("0.10"),
+        multiple_of=Decimal("0.05"),
+    )
 
 class ContractorResponse(BaseModel):
     contractor_id: str
@@ -361,11 +403,57 @@ class OpportunityDecisionResponse(BaseModel):
 class AdminReasonRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
 
+class AdminReviewInvitationResolutionRequest(BaseModel):
+    action: Literal["RESEND", "DO_NOT_RESEND"]
+    reason: str = Field(min_length=3, max_length=1000)
+
+class HomeownerReviewSubmission(BaseModel):
+    token: str = Field(min_length=1, max_length=256)
+
+    rating: StrictInt = Field(ge=1, le=5)
+
+    # False = Paid In Full
+    # True = Put on a payment plan
+    payment_plan_agreed: StrictBool
+
+    written_feedback: str | None = Field(
+        default=None,
+        max_length=5000,
+    )
+
+    total_cost_submitted: StrictBool = False
+
+    total_cost: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=12,
+        decimal_places=2,
+    )
+
+    cost_comments: str | None = Field(
+        default=None,
+        max_length=5000,
+    )
+
+    @model_validator(mode="after")
+    def validate_cost_submission(self):
+        if self.total_cost_submitted and self.total_cost is None:
+            raise ValueError(
+                "Enter the final total cost or indicate that you are not providing it."
+            )
+
+        if not self.total_cost_submitted and self.total_cost is not None:
+            raise ValueError(
+                "Total cost must be omitted when it is not being submitted."
+            )
+
+        return self
 
 class AdminExtendRequest(AdminReasonRequest):
     days: int = Field(ge=1, le=30)
 
 class AdminPaymentAgreementRevisionRequest(PaymentAgreementRequest):
+    term_months: int | None = Field(default=None, gt=0)
     reason: str = Field(min_length=3, max_length=1000)
 
 class AdminActionResponse(BaseModel):
@@ -1892,6 +1980,28 @@ def admin_list_leads(request: Request):
             """)
             return [dict(row) for row in cur.fetchall()]
 
+@app.get("/admin/homeowner-reviews")
+def admin_list_homeowner_reviews(request: Request):
+    require_admin(request)
+    return list_homeowner_reviews()
+
+@app.get("/admin/review-invitations")
+def admin_list_homeowner_review_invitations(request: Request):
+    require_admin(request)
+    return list_homeowner_review_invitations()
+
+@app.get("/admin/homeowner-reviews/{review_id}")
+def admin_get_homeowner_review(review_id: int, request: Request):
+    require_admin(request)
+
+    result = get_homeowner_review_detail(review_id=review_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Homeowner review not found.",
+        )
+
+    return result
 
 @app.get("/admin/jobs/{job_id}/activity")
 def admin_job_activity(job_id: str, request: Request):
@@ -1992,7 +2102,8 @@ def admin_contractor_activity(
                 WHERE c.contractor_id = %s
                   AND sh.event_type IN (
                       'ContractorCreated',
-                      'ContractorMatchingProfileUpdated'
+                      'ContractorMatchingProfileUpdated',
+                      'ContractorReferralFeeRateUpdated'
                   )
                 ORDER BY sh.created_at ASC, sh.id ASC
                 """,
@@ -2008,6 +2119,24 @@ def admin_contractor_activity(
                 "profile_events": profile_events,
             }
 
+@app.get("/admin/jobs/{job_id}/payment-agreement")
+def admin_get_payment_agreement(job_id: str, request: Request):
+    require_admin(request)
+
+    try:
+        return get_admin_payment_agreement(
+            public_job_id=job_id,
+        )
+    except AgreementJobNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found.",
+        )
+    except InvalidAgreementError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        )
 
 @app.post(
     "/admin/jobs/{job_id}/payment-agreement/revise",
@@ -2029,6 +2158,7 @@ def admin_revise_payment_agreement(
             reason=body.reason,
             arrangement_type=body.arrangement_type,
             invoice_total=body.invoice_total,
+            term_months=body.term_months,
             down_payment_amount=body.down_payment_amount,
             down_payment_due_date=body.down_payment_due_date,
             installment_count=body.installment_count,
@@ -2056,6 +2186,76 @@ def admin_revise_payment_agreement(
         )
 
     return result
+
+@app.get("/homeowner/review-invitations/validate")
+def validate_homeowner_review_link(token: str):
+    """Validate a homeowner review link without exposing personal information."""
+
+    try:
+        return validate_homeowner_review_invitation(token=token)
+
+    except InvalidReviewTokenError:
+        raise HTTPException(
+            status_code=404,
+            detail="This review link is invalid.",
+        )
+
+    except ReviewAlreadySubmittedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+
+    except ReviewExpiredError as exc:
+        raise HTTPException(
+            status_code=410,
+            detail=str(exc),
+        )
+
+
+@app.post("/homeowner/reviews", status_code=201)
+def submit_homeowner_review_endpoint(
+    body: HomeownerReviewSubmission,
+    request: Request,
+):
+    """Accept a homeowner review using its invitation token."""
+
+    require_allowed_origin(request)
+
+    try:
+        return submit_homeowner_review(
+            token=body.token,
+            rating=body.rating,
+            payment_plan_agreed=body.payment_plan_agreed,
+            written_feedback=body.written_feedback,
+            total_cost_submitted=body.total_cost_submitted,
+            total_cost=body.total_cost,
+            cost_comments=body.cost_comments,
+        )
+
+    except InvalidReviewTokenError:
+        raise HTTPException(
+            status_code=404,
+            detail="This review link is invalid.",
+        )
+
+    except ReviewAlreadySubmittedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+
+    except ReviewExpiredError as exc:
+        raise HTTPException(
+            status_code=410,
+            detail=str(exc),
+        )
+
+    except InvalidHomeownerReviewError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        )
 
 @app.post("/admin/review-invitations/{invitation_id}/resume")
 def admin_resume_homeowner_review_invitation(
@@ -2120,6 +2320,106 @@ def admin_stop_homeowner_review_invitation(
             detail=str(exc),
         )
 
+@app.post("/admin/review-invitations/{invitation_id}/resolve")
+def admin_resolve_homeowner_review_invitation(
+    invitation_id: int,
+    body: AdminReviewInvitationResolutionRequest,
+    request: Request,
+):
+    admin = require_admin(request)
+    require_allowed_origin(request)
+
+    try:
+        return resolve_homeowner_review_invitation(
+            invitation_id=invitation_id,
+            admin_id=admin["admin_id"],
+            action=body.action,
+            reason=body.reason,
+        )
+    except ReviewInvitationNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+    except ReviewInvitationConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        )
+
+@app.get("/admin/jobs/{job_id}/review-link")
+def admin_get_homeowner_review_link(
+    job_id: str,
+    request: Request,
+    response: Response,
+):
+    require_admin(request)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    i.id,
+                    i.token_hash,
+                    i.expires_at,
+                    i.submitted_at,
+                    i.expires_at > CURRENT_TIMESTAMP AS is_valid
+                FROM homeowner_review_invitations i
+                JOIN jobs j ON j.id = i.job_id
+                WHERE j.job_id = %s
+                """,
+                (job_id,),
+            )
+            invitation = cur.fetchone()
+
+    if invitation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No homeowner review invitation exists for this job.",
+        )
+
+    if invitation["submitted_at"] is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="The homeowner has already submitted a review.",
+        )
+
+    if not invitation["is_valid"]:
+        raise HTTPException(
+            status_code=410,
+            detail="The homeowner review invitation has expired.",
+        )
+
+    stored_hash = invitation["token_hash"]
+
+    if not stored_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="The review token has not been initialized.",
+        )
+
+    token = generate_review_token(invitation["id"])
+
+    if not review_token_matches(token, stored_hash):
+        raise HTTPException(
+            status_code=500,
+            detail="The review invitation token could not be verified.",
+        )
+
+    return {
+        "job_id": job_id,
+        "review_path": f"/homeowner/review?token={token}",
+        "expires_at": invitation["expires_at"].isoformat(),
+    }
+
 @app.get("/admin/jobs")
 def admin_list_jobs(request: Request):
     require_admin(request)
@@ -2130,6 +2430,7 @@ def admin_list_jobs(request: Request):
                 SELECT
                     j.job_id,
                     j.status,
+                    j.referral_fee_rate::float AS referral_fee_rate,
                     j.quoted_amount::float AS quoted_amount,
                     j.created_at::text AS created_at,
                     j.updated_at::text AS updated_at,
@@ -2162,7 +2463,7 @@ def admin_list_contractors(request: Request):
             cur.execute("""
                 SELECT c.contractor_id, c.company_name, c.contact_name,
                        c.email, c.phone, c.service_area, c.specialties,
-                       c.availability, c.status, c.created_at,
+                       c.availability, c.default_referral_fee_rate::float AS default_referral_fee_rate, c.status, c.created_at,
                        (a.id IS NOT NULL) AS has_login
                 FROM contractors c
                 LEFT JOIN contractor_accounts a
@@ -2205,6 +2506,339 @@ def admin_register_contractor(
         "availability": contractor["availability"],
     }
 
+@app.patch("/admin/contractors/{contractor_id}/referral-fee-rate")
+def admin_update_contractor_referral_fee_rate(
+    contractor_id: str,
+    rate_input: ContractorReferralFeeRateUpdate,
+    request: Request,
+):
+    admin = require_admin(request)
+    require_allowed_origin(request)
+
+    new_rate = rate_input.referral_fee_rate
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Serialize rate changes against opportunity acceptance.
+            cur.execute(
+                """
+                SELECT id, default_referral_fee_rate
+                FROM contractors
+                WHERE contractor_id = %s
+                FOR UPDATE
+                """,
+                (contractor_id,),
+            )
+            contractor = cur.fetchone()
+
+            if contractor is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Contractor not found.",
+                )
+
+            contractor_pk = contractor["id"]
+            previous_rate = contractor["default_referral_fee_rate"]
+
+            if previous_rate == new_rate:
+                return {
+                    "contractor_id": contractor_id,
+                    "previous_rate": float(previous_rate),
+                    "new_rate": float(new_rate),
+                    "adjusted_jobs": 0,
+                    "message": "The contractor already has this referral fee rate.",
+                }
+
+            cur.execute(
+                """
+                UPDATE contractors
+                SET default_referral_fee_rate = %s
+                WHERE id = %s
+                """,
+                (new_rate, contractor_pk),
+            )
+
+            adjusted_jobs = []
+
+            # A decrease affects only active jobs without any submitted
+            # payment-agreement version. A previous submission protects
+            # the job even if that agreement was later superseded.
+            if new_rate < previous_rate:
+                cur.execute(
+                    """
+                    SELECT
+                        j.id,
+                        j.job_id,
+                        j.referral_fee_rate
+                    FROM jobs AS j
+                    WHERE j.contractor_id = %s
+                      AND j.status IN (
+                          'QUOTE_IN_PROGRESS',
+                          'BID_WON',
+                          'JOB_IN_PROGRESS'
+                      )
+                      AND j.referral_fee_rate > %s
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM job_payment_agreements AS jpa
+                          WHERE jpa.job_id = j.id
+                            AND jpa.emg_review_requested_at IS NOT NULL
+                      )
+                    ORDER BY j.id
+                    FOR UPDATE OF j
+                    """,
+                    (contractor_pk, new_rate),
+                )
+                eligible_jobs = cur.fetchall()
+
+                for job in eligible_jobs:
+                    old_job_rate = job["referral_fee_rate"]
+                    effective_rate = min(old_job_rate, new_rate)
+
+                    cur.execute(
+                        """
+                        UPDATE jobs
+                        SET referral_fee_rate = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                        """,
+                        (effective_rate, job["id"]),
+                    )
+
+                    cur.execute(
+                        """
+                        INSERT INTO job_financial_audit_events (
+                            job_id,
+                            contractor_id,
+                            actor_type,
+                            event_type,
+                            related_record_type,
+                            related_record_id,
+                            details
+                        )
+                        VALUES (
+                            %s,
+                            %s,
+                            'EMG',
+                            'REFERRAL_FEE_RATE_ADJUSTED',
+                            'contractors',
+                            %s,
+                            jsonb_build_object(
+                                'previous_rate', %s::numeric,
+                                'new_rate', %s::numeric,
+                                'reason', 'CONTRACTOR_DEFAULT_RATE_DECREASE'
+                            )
+                        )
+                        """,
+                        (
+                            job["id"],
+                            contractor_pk,
+                            contractor_pk,
+                            old_job_rate,
+                            effective_rate,
+                        ),
+                    )
+
+                    adjusted_jobs.append(job["job_id"])
+
+            cur.execute(
+                """
+                INSERT INTO status_history (
+                    contractor_id,
+                    event_type,
+                    previous_status,
+                    new_status,
+                    metadata
+                )
+                VALUES (
+                    %s,
+                    'ContractorReferralFeeRateUpdated',
+                    %s,
+                    %s,
+                    jsonb_build_object(
+                        'previous_rate', %s::numeric,
+                        'new_rate', %s::numeric,
+                        'adjusted_jobs', %s,
+                        'admin_username', %s::text
+                    )
+                )
+                """,
+                (
+                    contractor_pk,
+                    format(previous_rate, ".4f"),
+                    format(new_rate, ".4f"),
+                    previous_rate,
+                    new_rate,
+                    len(adjusted_jobs),
+                    admin["username"],
+                ),
+            )
+
+    return {
+        "contractor_id": contractor_id,
+        "previous_rate": float(previous_rate),
+        "new_rate": float(new_rate),
+        "adjusted_jobs": len(adjusted_jobs),
+        "adjusted_job_ids": adjusted_jobs,
+    }
+
+@app.patch("/admin/jobs/{job_id}/referral-fee-rate")
+def admin_update_job_referral_fee_rate(
+    job_id: str,
+    rate_input: ContractorReferralFeeRateUpdate,
+    request: Request,
+):
+    admin = require_admin(request)
+    require_allowed_origin(request)
+
+    requested_rate = rate_input.referral_fee_rate
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Read the contractor association first so we can preserve
+            # the same contractor-then-job lock order used by rate changes.
+            cur.execute(
+                """
+                SELECT id, contractor_id
+                FROM jobs
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+            initial_job = cur.fetchone()
+
+            if initial_job is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Job not found.",
+                )
+
+            contractor_pk = initial_job["contractor_id"]
+
+            if contractor_pk is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A contractor must be assigned before changing the job referral fee rate.",
+                )
+
+            # Lock the contractor first to serialize this operation against
+            # contractor default-rate changes and opportunity acceptance.
+            cur.execute(
+                """
+                SELECT id, default_referral_fee_rate
+                FROM contractors
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (contractor_pk,),
+            )
+            contractor = cur.fetchone()
+
+            if contractor is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The job's assigned contractor could not be found.",
+                )
+
+            # Lock and re-read the job after acquiring the contractor lock.
+            cur.execute(
+                """
+                SELECT id, contractor_id, referral_fee_rate
+                FROM jobs
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (initial_job["id"],),
+            )
+            job = cur.fetchone()
+
+            if job is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Job not found.",
+                )
+
+            if job["contractor_id"] != contractor_pk:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The job's assigned contractor changed. Please refresh and try again.",
+                )
+
+            previous_rate = job["referral_fee_rate"]
+            contractor_default_rate = contractor["default_referral_fee_rate"]
+
+            # The effective job rate cannot exceed the contractor's default.
+            effective_rate = min(
+                requested_rate,
+                contractor_default_rate,
+            )
+
+            if previous_rate == effective_rate:
+                return {
+                    "job_id": job_id,
+                    "previous_rate": float(previous_rate),
+                    "requested_rate": float(requested_rate),
+                    "new_rate": float(effective_rate),
+                    "message": "The job already has this effective referral fee rate.",
+                }
+
+            cur.execute(
+                """
+                UPDATE jobs
+                SET referral_fee_rate = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (effective_rate, job["id"]),
+            )
+
+            cur.execute(
+                """
+                INSERT INTO job_financial_audit_events (
+                    job_id,
+                    contractor_id,
+                    actor_type,
+                    event_type,
+                    related_record_type,
+                    related_record_id,
+                    details
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    'EMG',
+                    'REFERRAL_FEE_RATE_ADJUSTED',
+                    'jobs',
+                    %s,
+                    jsonb_build_object(
+                        'previous_rate', %s::numeric,
+                        'requested_rate', %s::numeric,
+                        'new_rate', %s::numeric,
+                        'contractor_default_rate', %s::numeric,
+                        'reason', 'MANUAL_JOB_RATE_UPDATE',
+                        'admin_username', %s::text
+                    )
+                )
+                """,
+                (
+                    job["id"],
+                    contractor_pk,
+                    job["id"],
+                    previous_rate,
+                    requested_rate,
+                    effective_rate,
+                    contractor_default_rate,
+                    admin["username"],
+                ),
+            )
+
+    return {
+        "job_id": job_id,
+        "previous_rate": float(previous_rate),
+        "requested_rate": float(requested_rate),
+        "new_rate": float(effective_rate),
+        "contractor_default_rate": float(contractor_default_rate),
+    }
 
 @app.post("/admin/contractor-accounts", status_code=201)
 def admin_create_contractor_account(

@@ -9,7 +9,9 @@ from typing import Any
 from urllib.parse import quote
 
 import boto3
-
+from app.services.contractor_invoice_delivery import (
+    _is_definitive_ses_rejection,
+)
 from app.database.connection import get_connection
 from app.services.review_tokens import (
     generate_review_token,
@@ -21,6 +23,45 @@ LEASE_MINUTES = 5
 MAX_FAILURE_STREAK = 5
 MAX_BATCH_SIZE = 100
 
+def list_homeowner_review_invitations():
+    """Return recent review invitations and their delivery state for admins."""
+
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                i.id AS invitation_id,
+                j.job_id,
+                l.lead_id,
+                l.customer_name,
+                l.customer_email,
+                c.contractor_id,
+                c.company_name,
+                i.delivery_status,
+                i.retry_state,
+                i.attempts,
+                i.failure_streak,
+                i.last_error,
+                i.last_attempt_at::text AS last_attempt_at,
+                i.next_attempt_at::text AS next_attempt_at,
+                i.expires_at::text AS expires_at,
+                i.email_sent_at::text AS email_sent_at,
+                i.paused_at::text AS paused_at,
+                i.stopped_at::text AS stopped_at,
+                i.created_at::text AS created_at
+            FROM homeowner_review_invitations AS i
+            JOIN jobs AS j
+                ON j.id = i.job_id
+            JOIN leads AS l
+                ON l.id = j.lead_id
+            JOIN contractors AS c
+                ON c.id = j.contractor_id
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+
+    return [dict(row) for row in rows]
 
 def _email_configuration() -> tuple[str, str, Any]:
     sender = os.getenv("EMG_REVIEW_EMAIL_FROM", "").strip()
@@ -62,10 +103,7 @@ def _claim_due_invitations(batch_size: int) -> list[dict[str, Any]]:
                       AND BTRIM(customer_email) <> ''
                       AND expires_at > CURRENT_TIMESTAMP
                       AND next_attempt_at <= CURRENT_TIMESTAMP
-                      AND (
-                          claimed_until IS NULL
-                          OR claimed_until <= CURRENT_TIMESTAMP
-                      )
+                      AND claimed_until IS NULL
                     ORDER BY next_attempt_at, created_at, id
                     FOR UPDATE SKIP LOCKED
                     LIMIT %s
@@ -131,6 +169,96 @@ def _claim_due_invitations(batch_size: int) -> list[dict[str, Any]]:
 
     return invitations
 
+def _recover_expired_review_claims(
+    batch_size: int = 100,
+) -> list[int]:
+    """Mark expired worker claims UNKNOWN rather than retrying them."""
+
+    if not 1 <= batch_size <= MAX_BATCH_SIZE:
+        raise ValueError(
+            f"batch_size must be between 1 and {MAX_BATCH_SIZE}."
+        )
+
+    recovered: list[int] = []
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    attempts,
+                    failure_streak,
+                    claimed_until
+                FROM homeowner_review_invitations
+                WHERE retry_state = 'ACTIVE'
+                  AND delivery_status IN ('PENDING', 'FAILED')
+                  AND submitted_at IS NULL
+                  AND claimed_until IS NOT NULL
+                  AND claimed_until <= CURRENT_TIMESTAMP
+                ORDER BY claimed_until, id
+                FOR UPDATE SKIP LOCKED
+                LIMIT %s
+                """,
+                (batch_size,),
+            )
+            invitations = cursor.fetchall()
+
+            for invitation in invitations:
+                cursor.execute(
+                    """
+                    UPDATE homeowner_review_invitations
+                    SET delivery_status = 'UNKNOWN',
+                        retry_state = 'UNKNOWN',
+                        next_attempt_at = NULL,
+                        claimed_until = NULL,
+                        last_error = %s
+                    WHERE id = %s
+                      AND retry_state = 'ACTIVE'
+                      AND delivery_status IN ('PENDING', 'FAILED')
+                      AND submitted_at IS NULL
+                      AND claimed_until = %s
+                    RETURNING attempts, failure_streak
+                    """,
+                    (
+                        "Worker claim expired; email delivery outcome "
+                        "cannot be confirmed.",
+                        invitation["id"],
+                        invitation["claimed_until"],
+                    ),
+                )
+                updated = cursor.fetchone()
+
+                if updated is None:
+                    continue
+
+                cursor.execute(
+                    """
+                    INSERT INTO homeowner_review_delivery_events (
+                        invitation_id,
+                        event_type,
+                        attempt_number,
+                        failure_streak,
+                        details
+                    )
+                    VALUES (%s, 'OUTCOME_UNKNOWN', %s, %s, %s::jsonb)
+                    """,
+                    (
+                        invitation["id"],
+                        updated["attempts"],
+                        updated["failure_streak"],
+                        json.dumps({
+                            "reason": (
+                                "Worker claim expired before delivery "
+                                "outcome could be confirmed."
+                            )
+                        }),
+                    ),
+                )
+
+                recovered.append(invitation["id"])
+
+    return recovered
 
 def _send_invitation(
     ses: Any,
@@ -245,6 +373,64 @@ def _record_success(
 
     return True
 
+def _record_unknown(
+    invitation: dict[str, Any],
+    error: Exception,
+) -> bool:
+    """Record an uncertain delivery outcome without automatically retrying."""
+
+    error_message = (
+        f"Delivery outcome unknown: {type(error).__name__}: {error}"
+    )[:2000]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE homeowner_review_invitations
+                SET delivery_status = 'UNKNOWN',
+                    retry_state = 'UNKNOWN',
+                    next_attempt_at = NULL,
+                    claimed_until = NULL,
+                    last_error = %s
+                WHERE id = %s
+                  AND claimed_until = %s
+                  AND retry_state = 'ACTIVE'
+                  AND submitted_at IS NULL
+                  AND delivery_status IN ('PENDING', 'FAILED')
+                RETURNING attempts, failure_streak
+                """,
+                (
+                    error_message,
+                    invitation["id"],
+                    invitation["claimed_until"],
+                ),
+            )
+            updated = cursor.fetchone()
+
+            if updated is None:
+                return False
+
+            cursor.execute(
+                """
+                INSERT INTO homeowner_review_delivery_events (
+                    invitation_id,
+                    event_type,
+                    attempt_number,
+                    failure_streak,
+                    details
+                )
+                VALUES (%s, 'OUTCOME_UNKNOWN', %s, %s, %s::jsonb)
+                """,
+                (
+                    invitation["id"],
+                    updated["attempts"],
+                    updated["failure_streak"],
+                    json.dumps({"error": error_message}),
+                ),
+            )
+
+    return True
 
 def _record_failure(
     invitation: dict[str, Any],
@@ -371,6 +557,7 @@ def deliver_homeowner_review_invitations(
             f"Batch size must be between 1 and {MAX_BATCH_SIZE}."
         )
 
+    recovered_unknown = _recover_expired_review_claims()
     sender, base_url, ses = _email_configuration()
     invitations = _claim_due_invitations(batch_size)
 
@@ -378,6 +565,7 @@ def deliver_homeowner_review_invitations(
     failed: list[dict[str, Any]] = []
     paused: list[int] = []
     claim_lost: list[int] = []
+    unknown: list[int] = []
 
     for invitation in invitations:
         try:
@@ -389,21 +577,43 @@ def deliver_homeowner_review_invitations(
                 invitation["token"],
             )
         except Exception as error:
-            result = _record_failure(invitation, error)
+            if _is_definitive_ses_rejection(error):
+                result = _record_failure(invitation, error)
 
-            if result["recorded"]:
-                failed.append({
-                    "invitation_id": invitation["id"],
-                    "failure_streak": result["failure_streak"],
-                })
-                if result["paused"]:
-                    paused.append(invitation["id"])
+                if result["recorded"]:
+                    failed.append(
+                        {
+                            "invitation_id": invitation["id"],
+                            "failure_streak": result["failure_streak"],
+                            "paused": result["paused"],
+                        }
+                    )
+                    if result["paused"]:
+                        paused.append(invitation["id"])
+                else:
+                    claim_lost.append(invitation["id"])
             else:
-                claim_lost.append(invitation["id"])
-
+                if _record_unknown(invitation, error):
+                    unknown.append(invitation["id"])
+                else:
+                    claim_lost.append(invitation["id"])
             continue
 
-        if _record_success(invitation, message_id):
+        try:
+            recorded = _record_success(invitation, message_id)
+        except Exception as error:
+            confirmation_error = RuntimeError(
+                f"SES accepted message {message_id}, but database "
+                f"confirmation failed: {type(error).__name__}: {error}"
+            )
+
+            if _record_unknown(invitation, confirmation_error):
+                unknown.append(invitation["id"])
+            else:
+                claim_lost.append(invitation["id"])
+            continue
+
+        if recorded:
             sent.append(invitation["id"])
         else:
             claim_lost.append(invitation["id"])
@@ -416,6 +626,8 @@ def deliver_homeowner_review_invitations(
         "failed_invitations": failed,
         "paused_invitation_ids": paused,
         "claim_lost_invitation_ids": claim_lost,
+        "unknown_invitation_ids": unknown,
+        "recovered_unknown_invitation_ids": recovered_unknown,
     }
 
 class ReviewInvitationNotFoundError(Exception):
@@ -643,7 +855,8 @@ def expire_homeowner_review_invitations(
                     FROM homeowner_review_invitations
                     WHERE expires_at <= CURRENT_TIMESTAMP
                       AND submitted_at IS NULL
-                      AND retry_state <> 'EXPIRED'
+                      AND retry_state NOT IN ('EXPIRED', 'UNKNOWN')
+                      AND claimed_until IS NULL
                     ORDER BY expires_at, id
                     FOR UPDATE SKIP LOCKED
                     LIMIT %s
@@ -692,4 +905,183 @@ def expire_homeowner_review_invitations(
     return {
         "expired_count": len(expired_ids),
         "expired_invitation_ids": expired_ids,
+    }
+
+def resolve_homeowner_review_invitation(
+    invitation_id: int,
+    admin_id: int,
+    action: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Resolve an uncertain invitation delivery through an admin decision."""
+
+    action = action.strip().upper()
+    reason = _validate_admin_reason(reason)
+
+    if action not in ("RESEND", "DO_NOT_RESEND"):
+        raise ValueError(
+            "Action must be RESEND or DO_NOT_RESEND."
+        )
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    delivery_status,
+                    retry_state,
+                    attempts,
+                    failure_streak,
+                    expires_at,
+                    submitted_at
+                FROM homeowner_review_invitations
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (invitation_id,),
+            )
+            invitation = cursor.fetchone()
+
+            if invitation is None:
+                raise ReviewInvitationNotFoundError(
+                    "Review invitation not found."
+                )
+
+            if invitation["submitted_at"] is not None:
+                raise ReviewInvitationConflictError(
+                    "This invitation has already been submitted."
+                )
+
+            if (
+                invitation["delivery_status"] != "UNKNOWN"
+                or invitation["retry_state"] != "UNKNOWN"
+            ):
+                raise ReviewInvitationConflictError(
+                    "Only invitations with an unresolved delivery "
+                    "outcome can be resolved this way."
+                )
+
+            if (
+                action == "RESEND"
+                and invitation["expires_at"] <= datetime.now(timezone.utc)
+            ):
+                raise ReviewInvitationConflictError(
+                    "This invitation has expired and cannot be resent."
+                )
+
+            if action == "RESEND":
+                cursor.execute(
+                    """
+                    UPDATE homeowner_review_invitations
+                    SET delivery_status = 'PENDING',
+                        retry_state = 'ACTIVE',
+                        failure_streak = 0,
+                        next_attempt_at = CURRENT_TIMESTAMP,
+                        claimed_until = NULL,
+                        paused_at = NULL,
+                        stopped_at = NULL,
+                        last_error = NULL,
+                        retry_control_admin_id = %s,
+                        retry_control_reason = %s
+                    WHERE id = %s
+                    RETURNING attempts, failure_streak
+                    """,
+                    (admin_id, reason, invitation_id),
+                )
+                updated = cursor.fetchone()
+
+                cursor.execute(
+                    """
+                    INSERT INTO homeowner_review_delivery_events (
+                        invitation_id,
+                        event_type,
+                        attempt_number,
+                        failure_streak,
+                        admin_user_id,
+                        details
+                    )
+                    VALUES
+                        (%s, 'ADMIN_RESOLVED', %s, %s, %s, %s::jsonb),
+                        (%s, 'ADMIN_RESEND', %s, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        invitation_id,
+                        updated["attempts"],
+                        updated["failure_streak"],
+                        admin_id,
+                        json.dumps({
+                            "resolution": "RESEND",
+                            "reason": reason,
+                            "duplicate_delivery_possible": True,
+                        }),
+                        invitation_id,
+                        updated["attempts"],
+                        updated["failure_streak"],
+                        admin_id,
+                        json.dumps({
+                            "reason": reason,
+                            "original_delivery_outcome": "UNKNOWN",
+                        }),
+                    ),
+                )
+
+                retry_state = "ACTIVE"
+                message = (
+                    "Invitation returned to the delivery queue. "
+                    "The original email may already have been delivered."
+                )
+
+            else:
+                cursor.execute(
+                    """
+                    UPDATE homeowner_review_invitations
+                    SET retry_state = 'COMPLETE',
+                        next_attempt_at = NULL,
+                        claimed_until = NULL,
+                        retry_control_admin_id = %s,
+                        retry_control_reason = %s
+                    WHERE id = %s
+                    RETURNING attempts, failure_streak
+                    """,
+                    (admin_id, reason, invitation_id),
+                )
+                updated = cursor.fetchone()
+
+                cursor.execute(
+                    """
+                    INSERT INTO homeowner_review_delivery_events (
+                        invitation_id,
+                        event_type,
+                        attempt_number,
+                        failure_streak,
+                        admin_user_id,
+                        details
+                    )
+                    VALUES (%s, 'ADMIN_RESOLVED', %s, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        invitation_id,
+                        updated["attempts"],
+                        updated["failure_streak"],
+                        admin_id,
+                        json.dumps({
+                            "resolution": "DO_NOT_RESEND",
+                            "reason": reason,
+                            "delivery_status_remains": "UNKNOWN",
+                        }),
+                    ),
+                )
+
+                retry_state = "COMPLETE"
+                message = (
+                    "Automatic delivery stopped. The original delivery "
+                    "outcome remains unknown."
+                )
+
+    return {
+        "invitation_id": invitation_id,
+        "delivery_status": "PENDING" if action == "RESEND" else "UNKNOWN",
+        "retry_state": retry_state,
+        "message": message,
     }

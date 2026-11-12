@@ -1,6 +1,6 @@
 ﻿from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-
+from contextlib import nullcontext
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
@@ -45,34 +45,65 @@ def record_collection(
     public_job_id: str,
     contractor_pk: int,
     account_id: int,
-    amount: Decimal,
-    collected_at: datetime,
-    idempotency_key: str,
+    amount: Decimal | None = None,
+    collected_at: datetime | None = None,
+    idempotency_key: str | None = None,
+    paid_in_full_agreement_id: int | None = None,
+    db_connection=None,
 ) -> dict:
     """Record a contractor-reported collection and its fee accrual atomically."""
 
-    if not isinstance(amount, Decimal) or not amount.is_finite() or amount <= 0:
-        raise ValueError("Payment amount must be a positive decimal amount.")
+    paid_in_full_confirmation = paid_in_full_agreement_id is not None
 
-    if amount != _money(amount):
-        raise ValueError("Payment amount must have no more than two decimal places.")
+    if paid_in_full_confirmation:
+        if (
+            not isinstance(paid_in_full_agreement_id, int)
+            or isinstance(paid_in_full_agreement_id, bool)
+            or paid_in_full_agreement_id <= 0
+        ):
+            raise ValueError("A valid payment agreement ID is required.")
 
-    amount = _money(amount)
+        if any(
+            value is not None
+            for value in (amount, collected_at, idempotency_key)
+        ):
+            raise ValueError(
+                "Paid In Full confirmations generate their own payment amount, "
+                "date, and idempotency key."
+            )
+    else:
+        if not isinstance(amount, Decimal) or not amount.is_finite() or amount <= 0:
+            raise ValueError("Payment amount must be a positive decimal amount.")
 
-    if collected_at.tzinfo is None or collected_at.utcoffset() is None:
-        raise ValueError("collected_at must include a timezone.")
+        if amount != _money(amount):
+            raise ValueError("Payment amount must have no more than two decimal places.")
 
-    collected_at = collected_at.astimezone(timezone.utc)
+        amount = _money(amount)
 
-    if collected_at > datetime.now(timezone.utc):
-        raise ValueError("A payment cannot be reported before it is collected.")
+        if (
+            collected_at is None
+            or collected_at.tzinfo is None
+            or collected_at.utcoffset() is None
+        ):
+            raise ValueError("collected_at must include a timezone.")
 
-    if not idempotency_key or len(idempotency_key) > 100:
-        raise ValueError("Provide an idempotency key of 1 to 100 characters.")
+        collected_at = collected_at.astimezone(timezone.utc)
+
+        if collected_at > datetime.now(timezone.utc):
+            raise ValueError("A payment cannot be reported before it is collected.")
+
+        if not idempotency_key or len(idempotency_key) > 100:
+            raise ValueError("Provide an idempotency key of 1 to 100 characters.")
 
     try:
-        with get_connection() as connection:
-            with connection.cursor() as cursor:
+        connection_context = (
+            get_connection()
+            if db_connection is None
+            else nullcontext(db_connection)
+        )
+
+        with connection_context as active_connection:
+            with active_connection.cursor() as cursor:
                 # Find the job only within the authenticated contractor's account.
                 cursor.execute(
                     """
@@ -106,6 +137,44 @@ def record_collection(
 
                 if job is None:
                     raise JobNotFoundError()
+                paid_in_full_agreement = None
+
+                if paid_in_full_confirmation:
+                    cursor.execute(
+                        """
+                        SELECT id, arrangement_type, status, invoice_total
+                        FROM job_payment_agreements
+                        WHERE job_id = %s
+                          AND contractor_id = %s
+                        ORDER BY version DESC
+                        LIMIT 1
+                        FOR UPDATE
+                        """,
+                        (job["id"], contractor_pk),
+                    )
+                    paid_in_full_agreement = cursor.fetchone()
+
+                    if (
+                        paid_in_full_agreement is None
+                        or paid_in_full_agreement["id"] != paid_in_full_agreement_id
+                    ):
+                        raise IdempotencyConflictError(
+                            "This payment agreement is no longer the current version."
+                        )
+
+                    if (
+                        paid_in_full_agreement["arrangement_type"] != "PAID_IN_FULL"
+                        or paid_in_full_agreement["status"]
+                        not in {"ACCEPTED", "ADMIN_REVISED"}
+                    ):
+                        raise ValueError(
+                            "Only an approved Paid In Full agreement can be confirmed."
+                        )
+
+                    idempotency_key = (
+                        f"paid-in-full:{paid_in_full_agreement_id}"
+                    )
+                    collected_at = datetime.now(timezone.utc)
 
                 # A retry returns the original records without creating another accrual.
                 cursor.execute(
@@ -129,11 +198,14 @@ def record_collection(
                 previous = cursor.fetchone()
 
                 if previous is not None:
-                    same_request = (
-                        previous["job_id"] == job["id"]
-                        and previous["amount"] == amount
-                        and previous["collected_at"] == collected_at
-                    )
+                    same_request = previous["job_id"] == job["id"]
+
+                    if not paid_in_full_confirmation:
+                        same_request = (
+                            same_request
+                            and previous["amount"] == amount
+                            and previous["collected_at"] == collected_at
+                        )
                     if not same_request:
                         raise IdempotencyConflictError(
                             "This idempotency key was already used for a different payment."
@@ -151,7 +223,103 @@ def record_collection(
                         ),
                         "idempotent_replay": True,
                     }
+                if not paid_in_full_confirmation:
+                    cursor.execute(
+                        """
+                        SELECT id, arrangement_type, status, invoice_total
+                        FROM job_payment_agreements
+                        WHERE job_id = %s
+                          AND contractor_id = %s
+                        ORDER BY version DESC
+                        LIMIT 1
+                        FOR UPDATE
+                        """,
+                        (job["id"], contractor_pk),
+                    )
+                    current_agreement = cursor.fetchone()
 
+                    if current_agreement is not None:
+                        if (
+                            current_agreement["arrangement_type"] != "PAYMENT_PLAN"
+                            or current_agreement["status"]
+                            not in {"ACCEPTED", "ADMIN_REVISED"}
+                        ):
+                            raise ValueError(
+                                "Payments can only be reported against an "
+                                "approved payment plan."
+                            )
+
+                        cursor.execute(
+                            """
+                            SELECT COALESCE(SUM(amount), 0) AS collected_total
+                            FROM job_collections
+                            WHERE job_id = %s
+                              AND contractor_id = %s
+                              AND report_status = 'ACTIVE'
+                            """,
+                            (job["id"], contractor_pk),
+                        )
+                        collected_before = _money(
+                            cursor.fetchone()["collected_total"]
+                        )
+
+                        remaining_balance = _money(
+                            current_agreement["invoice_total"]
+                            - collected_before
+                        )
+
+                        if remaining_balance <= Decimal("0.00"):
+                            raise ValueError(
+                                "The invoice has already been paid in full."
+                            )
+
+                        if amount > remaining_balance:
+                            raise ValueError(
+                                "The reported payment exceeds the "
+                                "remaining invoice balance."
+                            )
+                if paid_in_full_confirmation:
+                    cursor.execute(
+                        """
+                        SELECT COALESCE(SUM(amount), 0) AS collected_total
+                        FROM job_collections
+                        WHERE job_id = %s
+                          AND contractor_id = %s
+                          AND report_status = 'ACTIVE'
+                        """,
+                        (job["id"], contractor_pk),
+                    )
+                    collected_before = _money(
+                        cursor.fetchone()["collected_total"]
+                    )
+
+                    remaining_balance = _money(
+                        paid_in_full_agreement["invoice_total"]
+                        - collected_before
+                    )
+
+                    if remaining_balance <= Decimal("0.00"):
+                        cursor.execute(
+                            """
+                            UPDATE job_payment_agreements
+                            SET paid_in_full_at = COALESCE(
+                                paid_in_full_at,
+                                CURRENT_TIMESTAMP
+                            )
+                            WHERE id = %s
+                            """,
+                            (paid_in_full_agreement_id,),
+                        )
+
+                        return {
+                            "job_id": job["job_id"],
+                            "agreement_id": paid_in_full_agreement_id,
+                            "already_paid": True,
+                            "collected_total": str(collected_before),
+                            "remaining_balance": "0.00",
+                        }
+
+                    amount = remaining_balance
                 cursor.execute(
                     """
                     SELECT COALESCE(SUM(a.fee_amount), 0) AS total_fee

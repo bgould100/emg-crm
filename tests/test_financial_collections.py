@@ -107,95 +107,11 @@ def financial_job(monkeypatch):
         }
 
     finally:
-        # Remove only records associated with this fixture's lead/job.
-        with get_connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT id FROM leads WHERE lead_id = %s",
-                    (lead_id,),
-                ) if lead_id else None
-                lead_row = cursor.fetchone() if lead_id else None
-
-                if lead_row:
-                    db_lead_id = lead_row["id"]
-
-                    cursor.execute(
-                        "SELECT id FROM jobs WHERE lead_id = %s",
-                        (db_lead_id,),
-                    )
-                    job_rows = cursor.fetchall()
-                    job_ids = [row["id"] for row in job_rows]
-
-                    if job_ids:
-                        cursor.execute(
-                            """
-                            DELETE FROM job_payment_dispute_evidence
-                            WHERE dispute_id IN (
-                                SELECT id FROM job_payment_disputes
-                                WHERE job_id = ANY(%s)
-                            )
-                            """,
-                            (job_ids,),
-                        )
-                        cursor.execute(
-                            """
-                            DELETE FROM homeowner_payment_verifications
-                            WHERE job_id = ANY(%s)
-                            """,
-                            (job_ids,),
-                        )
-                        cursor.execute(
-                            "DELETE FROM job_payment_disputes WHERE job_id = ANY(%s)",
-                            (job_ids,),
-                        )
-                        cursor.execute(
-                            "DELETE FROM job_fee_accruals WHERE job_id = ANY(%s)",
-                            (job_ids,),
-                        )
-                        cursor.execute(
-                            "DELETE FROM job_collections WHERE job_id = ANY(%s)",
-                            (job_ids,),
-                        )
-                        cursor.execute(
-                            "DELETE FROM job_payment_agreements WHERE job_id = ANY(%s)",
-                            (job_ids,),
-                        )
-                        cursor.execute(
-                            "DELETE FROM job_financial_audit_events WHERE job_id = ANY(%s)",
-                            (job_ids,),
-                        )
-
-                    cursor.execute(
-                        "DELETE FROM status_history WHERE lead_id = %s",
-                        (db_lead_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM photos WHERE lead_id = %s",
-                        (db_lead_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM jobs WHERE lead_id = %s",
-                        (db_lead_id,),
-                    )
-                    cursor.execute(
-                        """
-                        DELETE FROM status_history
-                        WHERE opportunity_id IN (
-                            SELECT id FROM opportunities WHERE lead_id = %s
-                        )
-                        """,
-                        (db_lead_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM opportunities WHERE lead_id = %s",
-                        (db_lead_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM leads WHERE id = %s",
-                        (db_lead_id,),
-                    )
-
-                if db_contractor_id is not None:
+        # Preserve contractor accounts and financial records referenced by
+        # the immutable financial history. Remove only the temporary session.
+        if db_contractor_id is not None:
+            with get_connection() as connection:
+                with connection.cursor() as cursor:
                     cursor.execute(
                         """
                         DELETE FROM contractor_sessions
@@ -204,18 +120,6 @@ def financial_job(monkeypatch):
                             WHERE contractor_id = %s
                         )
                         """,
-                        (db_contractor_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM contractor_accounts WHERE contractor_id = %s",
-                        (db_contractor_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM status_history WHERE contractor_id = %s",
-                        (db_contractor_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM contractors WHERE id = %s",
                         (db_contractor_id,),
                     )
 
@@ -1321,11 +1225,34 @@ def test_payment_summary_updates_after_collection(financial_job):
         f"/contractor/jobs/{job_id}/payment-agreement",
         headers=headers,
         json={
-            "arrangement_type": "PAID_IN_FULL",
+            "arrangement_type": "PAYMENT_PLAN",
             "invoice_total": "500.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-10-01",
+            "installment_count": 2,
+            "schedule_type": "MONTHLY",
+            "installment_amount": "250.00",
+            "final_installment_amount": "250.00",
+            "plan_start_date": "2026-10-01",
+            "final_due_date": "2026-11-01",
         },
     )
     assert agreement_response.status_code == 201, agreement_response.text
+
+    agreement_id = agreement_response.json()["agreement"]["id"]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE job_payment_agreements
+                SET status = 'ACCEPTED',
+                    accepted_at = CURRENT_TIMESTAMP,
+                    accepted_by_account_id = %s
+                WHERE id = %s
+                """,
+                (financial_job["account_id"], agreement_id),
+            )
 
     collection_response = client.post(
         f"/contractor/jobs/{job_id}/collections",

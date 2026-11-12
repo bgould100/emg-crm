@@ -237,6 +237,7 @@
 
     <nav class="section-nav" aria-label="Admin sections">
       <button class="nav-btn active" data-section="leadsSection" type="button">Homeowner leads</button>
+      <button class="nav-btn" data-section="reviewsSection" type="button">Homeowner reviews</button>
       <button class="nav-btn" data-section="jobsSection" type="button">Jobs</button>
       <button class="nav-btn" data-section="contractorsSection" type="button">Contractors</button>
       <button class="nav-btn" data-section="accountsSection" type="button">Portal accounts</button>
@@ -261,6 +262,96 @@
               <tr><th>Lead</th><th>Service / description</th><th>Homeowner</th><th>Budget</th><th>Bids</th><th>Status</th><th>Submitted</th></tr>
             </thead>
             <tbody id="leadsBody"><tr><td colspan="7" class="empty">Connect with your admin token to load leads.</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+    <section id="reviewsSection" class="section-view hidden">
+      <article class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Homeowner reviews</h2>
+            <p class="muted" style="font-size:13px;margin-top:4px">
+              Review homeowner feedback and compare reported costs with payment agreements.
+            </p>
+          </div>
+          <button class="btn btn-small" id="refreshReviews" type="button">
+            Reload reviews
+          </button>
+        </div>
+
+        <div class="field" style="max-width:360px;margin-bottom:15px">
+          <label for="reviewSearch">Search reviews</label>
+          <input id="reviewSearch" type="search"
+            placeholder="Job ID, homeowner, contractor, feedback">
+        </div>
+
+        <div class="table-wrap">
+          <table style="min-width:900px">
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Homeowner</th>
+                <th>Contractor</th>
+                <th>Rating</th>
+                <th>Reported cost</th>
+                <th>Discrepancies</th>
+                <th>Submitted</th>
+              </tr>
+            </thead>
+            <tbody id="reviewsBody">
+              <tr>
+                <td colspan="7" class="empty">
+                  Connect as admin to load homeowner reviews.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel" style="margin-top:20px">
+        <div class="panel-heading">
+          <div>
+            <h2>Review Invitation Delivery</h2>
+            <p class="muted" style="font-size:13px;margin-top:4px">
+              Monitor homeowner review emails, retries, and unresolved delivery outcomes.
+            </p>
+          </div>
+          <button class="btn btn-small" id="refreshReviewInvitations" type="button">
+            Reload invitations
+          </button>
+        </div>
+
+        <div class="field" style="max-width:360px;margin-bottom:15px">
+          <label for="reviewInvitationSearch">Search invitations</label>
+          <input id="reviewInvitationSearch" type="search"
+            placeholder="Job ID, homeowner, email, contractor, status">
+        </div>
+
+        <div class="table-wrap">
+          <table style="min-width:1200px">
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Homeowner</th>
+                <th>Contractor</th>
+                <th>Delivery</th>
+                <th>Retry state</th>
+                <th>Attempts</th>
+                <th>Last error</th>
+                <th>Next attempt</th>
+                <th>Expires</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="reviewInvitationsBody">
+              <tr>
+                <td colspan="10" class="empty">
+                  Connect as admin to load review invitations.
+                </td>
+              </tr>
+            </tbody>
           </table>
         </div>
       </article>
@@ -323,7 +414,56 @@
       </div>
       <div id="leadDetailsContent"></div>
     </dialog>
+    <dialog id="reviewDetailsDialog" style="max-width:760px;width:calc(100% - 32px);background:var(--admin-panel);color:var(--admin-text);border:1px solid var(--admin-border);border-radius:14px;padding:24px">
+      <div class="panel-heading">
+        <h2>Homeowner review details</h2>
+        <button class="btn btn-small" id="closeReviewDetails" type="button">Close</button>
+      </div>
+      <div id="reviewDetailsContent"></div>
+    </dialog>
+    <dialog id="reviewInvitationResolveDialog"
+      style="max-width:620px;width:calc(100% - 32px);background:var(--admin-panel);color:var(--admin-text);border:1px solid var(--admin-border);border-radius:14px;padding:24px">
+      <div class="panel-heading">
+        <h2>Resolve Review Invitation</h2>
+        <button class="btn btn-small" id="closeReviewInvitationResolve"
+          type="button">Close</button>
+      </div>
 
+      <p id="reviewInvitationResolveDetails" class="muted"
+        style="font-size:13px;margin:8px 0 16px"></p>
+
+      <div class="notice warning" style="margin-bottom:16px">
+        The email provider may have accepted an invitation even though EMG
+        could not confirm delivery. Resending can therefore result in the
+        homeowner receiving a duplicate invitation.
+      </div>
+
+      <form id="reviewInvitationResolveForm">
+        <div class="field">
+          <label for="reviewInvitationResolveAction">Resolution</label>
+          <select id="reviewInvitationResolveAction" required>
+            <option value="DO_NOT_RESEND">Do not resend — leave delivery unresolved and close automatic retries</option>
+            <option value="RESEND">Resend invitation — a duplicate email is possible</option>
+          </select>
+        </div>
+
+        <div class="field" style="margin-top:14px">
+          <label for="reviewInvitationResolveReason">Admin reason</label>
+          <textarea id="reviewInvitationResolveReason"
+            minlength="3" maxlength="1000" required rows="4"
+            placeholder="Explain why this resolution was selected."></textarea>
+        </div>
+
+        <p id="reviewInvitationResolveError" class="notice error hidden"
+          role="alert"></p>
+
+        <div class="panel-heading" style="margin-top:16px">
+          <span></span>
+          <button class="btn" id="submitReviewInvitationResolve"
+            type="submit">Confirm resolution</button>
+        </div>
+      </form>
+    </dialog>
     <section id="contractorsSection" class="section-view hidden">
       <div class="panel-grid">
         <article class="panel">
@@ -441,6 +581,8 @@
   let leads = [];
   let contractors = [];
   let jobs = [];
+  let reviews = [];
+  let reviewInvitations = [];
   let overview = null;
 
   const $ = (id) => document.getElementById(id);
@@ -480,10 +622,16 @@
   function dateLabel(value) {
     if (!value) return "—";
 
-    const timestamp = typeof value === "string"
-      && !/(Z|[+-]\d{2}:\d{2})$/i.test(value)
-      ? `${value.replace(" ", "T")}Z`
-      : value;
+    let timestamp = value.replace(" ", "T");
+
+    // Normalize PostgreSQL timezone offsets such as +00 and +0000.
+    if (/([+-]\d{2})$/.test(timestamp)) {
+      timestamp += ":00";
+    } else if (/([+-]\d{4})$/.test(timestamp)) {
+      timestamp = timestamp.replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+    } else if (!/(Z|[+-]\d{2}:\d{2})$/i.test(timestamp)) {
+      timestamp += "Z";
+    }
 
     const date = new Date(timestamp);
 
@@ -536,6 +684,491 @@
     return data;
   }
 
+  async function loadAdminPaymentAgreement(jobId, content) {
+    const section = document.createElement("section");
+    section.style.marginTop = "24px";
+    section.style.paddingTop = "20px";
+    section.style.borderTop = "1px solid var(--admin-border)";
+    section.innerHTML = `
+      <h3>Payment agreement</h3>
+      <p class="sub-cell">Loading agreement history...</p>
+    `;
+    content.append(section);
+
+    try {
+      const data = await api(
+        `/admin/jobs/${encodeURIComponent(jobId)}/payment-agreement`
+      );
+
+      // Do not render a response for a job that is no longer open.
+      if (content.dataset.jobId !== jobId) return;
+
+      section.replaceChildren();
+
+      const heading = document.createElement("h3");
+      heading.textContent = "Payment agreement";
+      section.append(heading);
+
+      const summary = document.createElement("div");
+      summary.className = "notice info";
+      summary.innerHTML = `
+        <strong>Collections received:</strong>
+        ${escapeHtml(money(data.payment_summary?.collected_total))}<br>
+        <strong>Remaining balance:</strong>
+        ${escapeHtml(
+          data.payment_summary?.remaining_balance == null
+            ? "—"
+            : money(data.payment_summary.remaining_balance)
+        )}<br>
+        <strong>Referral fee accrued:</strong>
+        ${escapeHtml(money(data.payment_summary?.fee_accrued))}
+      `;
+      section.append(summary);
+
+      const history = Array.isArray(data.agreement_history)
+        ? data.agreement_history
+        : [];
+
+      if (!history.length) {
+        const empty = document.createElement("p");
+        empty.className = "sub-cell";
+        empty.textContent = "No payment agreement has been submitted.";
+        section.append(empty);
+        return;
+      }
+
+      const latest = history[0].agreement;
+
+      if (latest.status === "PENDING_EMG_REVIEW") {
+        const notice = document.createElement("div");
+        notice.className = "notice error";
+        notice.innerHTML = `
+          <strong>EMG review requested — not approved.</strong><br>
+          The contractor has requested custom payment terms.
+          This proposal does not authorize job completion.
+        `;
+        section.append(notice);
+      }
+
+      for (const version of history) {
+        const agreement = version.agreement;
+        const card = document.createElement("article");
+        card.className = "panel";
+        card.style.marginTop = "14px";
+        card.style.padding = "16px";
+
+        const statusClass =
+          agreement.status === "ACCEPTED" ||
+          agreement.status === "ADMIN_REVISED"
+            ? "green"
+            : agreement.status === "PENDING_EMG_REVIEW"
+              ? "red"
+              : "gold";
+
+        const fields = [
+          ["Version", agreement.version],
+          ["Status", agreement.status],
+          ["Arrangement", agreement.arrangement_type],
+          ["Invoice total", money(agreement.invoice_total)],
+          ["Down payment", money(agreement.down_payment_amount)],
+          ["Down payment due", agreement.down_payment_due_date],
+          ["Payment frequency", agreement.schedule_type],
+          ["Installment count", agreement.installment_count],
+          ["Regular installment", money(agreement.installment_amount)],
+          ["Final installment", money(
+            agreement.final_installment_amount ??
+            agreement.installment_amount
+          )],
+          ["Plan start", agreement.plan_start_date],
+          ["Final due date", agreement.final_due_date],
+          ["Created", dateLabel(agreement.created_at)],
+          ["Accepted", dateLabel(agreement.accepted_at)],
+          ["Admin revised", dateLabel(agreement.admin_revised_at)]
+        ];
+
+        const details = document.createElement("div");
+        details.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <strong>Agreement version ${escapeHtml(agreement.version)}</strong>
+            <span class="pill ${statusClass}">${escapeHtml(agreement.status)}</span>
+          </div>
+        `;
+
+        for (const [label, value] of fields) {
+          const row = document.createElement("p");
+          row.style.margin = "0 0 7px";
+          const strong = document.createElement("strong");
+          strong.textContent = `${label}: `;
+          row.append(
+            strong,
+            document.createTextNode(
+              value == null || value === "" ? "—" : String(value)
+            )
+          );
+          details.append(row);
+        }
+
+        if (agreement.emg_review_requested_at) {
+          const request = document.createElement("div");
+          request.className = "notice info";
+          request.style.marginTop = "14px";
+          request.innerHTML = `
+            <strong>Contractor requested EMG review</strong><br>
+            ${escapeHtml(dateLabel(agreement.emg_review_requested_at))}
+            <br><br>
+            <strong>Contractor note:</strong><br>
+            ${escapeHtml(
+              agreement.emg_review_request_note || "No note provided."
+            )}
+          `;
+          details.append(request);
+        }
+
+        if (agreement.admin_revision_reason) {
+          const reason = document.createElement("div");
+          reason.className = "notice info";
+          reason.style.marginTop = "12px";
+          reason.innerHTML = `
+            <strong>Admin revision reason:</strong><br>
+            ${escapeHtml(agreement.admin_revision_reason)}
+          `;
+          details.append(reason);
+        }
+
+        if (version.schedule_error) {
+          const error = document.createElement("div");
+          error.className = "notice error";
+          error.textContent =
+            `Schedule could not be reconstructed: ${version.schedule_error}`;
+          details.append(error);
+        } else if (version.installments?.length) {
+          const scheduleHeading = document.createElement("h4");
+          scheduleHeading.textContent = "Calculated installment schedule";
+          scheduleHeading.style.margin = "16px 0 8px";
+          details.append(scheduleHeading);
+
+          const table = document.createElement("div");
+          table.className = "table-wrap";
+          table.innerHTML = `
+            <table style="min-width:420px">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Due date</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${version.installments.map((item) => `
+                  <tr>
+                    <td>${escapeHtml(item.installment_number)}</td>
+                    <td>${escapeHtml(item.installment_type)}</td>
+                    <td>${escapeHtml(money(item.principal_amount))}</td>
+                    <td>${escapeHtml(item.due_date)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          `;
+          details.append(table);
+        }
+
+        card.append(details);
+        section.append(card);
+      }
+      // Admin may finalize a replacement agreement after confirming
+      // the proposed terms directly with the contractor.
+      const revisionStatuses = [
+        "PENDING_EMG_REVIEW",
+        "PENDING_ACCEPTANCE",
+        "ACCEPTED",
+        "ADMIN_REVISED"
+      ];
+
+      if (revisionStatuses.includes(latest.status)) {
+        const revisionSection = document.createElement("section");
+        revisionSection.style.marginTop = "20px";
+
+        revisionSection.innerHTML = `
+          <h3>Finalize or revise payment agreement</h3>
+
+          <div class="notice info">
+            Confirm the proposed terms directly with the contractor before
+            submitting this form. Submitting creates a new, operative
+            agreement version and supersedes the previous version.
+          </div>
+
+          <form id="adminAgreementRevisionForm">
+            <div class="form-grid">
+              <label class="field">
+                <span>Payment arrangement</span>
+                <select name="arrangement_type" required>
+                  <option value="PAYMENT_PLAN">Payment plan</option>
+                  <option value="PAID_IN_FULL">Paid in full</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Invoice total ($)</span>
+                <input
+                  name="invoice_total"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  required
+                >
+              </label>
+            </div>
+
+            <div id="adminRevisionPlanFields">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Payment frequency</span>
+                  <select name="schedule_type">
+                    <option value="WEEKLY">Weekly</option>
+                    <option value="BIWEEKLY">Biweekly</option>
+                    <option value="MONTHLY" selected>Monthly</option>
+                    <option value="CUSTOM">Custom schedule</option>
+                  </select>
+                </label>
+
+                <label class="field" id="adminRevisionTermField">
+                  <span>Agreement length (months)</span>
+                  <input
+                    name="term_months"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value="12"
+                  >
+                </label>
+
+                <label class="field">
+                  <span>Plan start date</span>
+                  <input name="plan_start_date" type="date">
+                </label>
+
+                <label class="field">
+                  <span>Down payment ($, optional)</span>
+                  <input
+                    name="down_payment_amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                  >
+                </label>
+              </div>
+
+              <div id="adminRevisionCustomFields" hidden>
+                <label class="field">
+                  <span>Custom installment schedule (JSON)</span>
+                  <textarea
+                    name="custom_schedule_json"
+                    rows="7"
+                    placeholder='[
+  {"due_date": "2027-06-15", "amount": "100.00"},
+  {"due_date": "2027-07-15", "amount": "100.00"}
+]'
+                  ></textarea>
+                </label>
+                <p class="sub-cell">
+                  Enter each installment's due date and amount. The schedule
+                  must cover the remaining invoice balance after the down payment.
+                </p>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>Reason for admin revision</span>
+              <textarea
+                name="reason"
+                rows="3"
+                minlength="3"
+                maxlength="1000"
+                required
+                placeholder="Record why these finalized terms are being submitted."
+              ></textarea>
+            </label>
+
+            <div
+              id="adminRevisionFormMessage"
+              aria-live="polite"
+              style="margin-top:12px"
+            ></div>
+
+            <button class="btn" type="submit" style="margin-top:12px">
+              Finalize agreement
+            </button>
+          </form>
+        `;
+
+        section.append(revisionSection);
+
+        const revisionForm = revisionSection.querySelector(
+          "#adminAgreementRevisionForm"
+        );
+        const arrangementSelect = revisionForm.elements.arrangement_type;
+        const scheduleSelect = revisionForm.elements.schedule_type;
+        const planFields = revisionForm.querySelector(
+          "#adminRevisionPlanFields"
+        );
+        const termField = revisionForm.querySelector(
+          "#adminRevisionTermField"
+        );
+        const customFields = revisionForm.querySelector(
+          "#adminRevisionCustomFields"
+        );
+        const message = revisionForm.querySelector(
+          "#adminRevisionFormMessage"
+        );
+        const submitButton = revisionForm.querySelector(
+          'button[type="submit"]'
+        );
+
+        function updateRevisionFields() {
+          const isPaymentPlan =
+            arrangementSelect.value === "PAYMENT_PLAN";
+          const isCustom =
+            isPaymentPlan && scheduleSelect.value === "CUSTOM";
+
+          planFields.hidden = !isPaymentPlan;
+          termField.hidden = !isPaymentPlan || isCustom;
+          customFields.hidden = !isCustom;
+
+          revisionForm.elements.schedule_type.required = isPaymentPlan;
+          revisionForm.elements.plan_start_date.required = isPaymentPlan;
+          revisionForm.elements.term_months.required =
+            isPaymentPlan && !isCustom;
+          revisionForm.elements.custom_schedule_json.required = isCustom;
+        }
+
+        arrangementSelect.addEventListener(
+          "change",
+          updateRevisionFields
+        );
+        scheduleSelect.addEventListener(
+          "change",
+          updateRevisionFields
+        );
+        updateRevisionFields();
+
+        revisionForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+
+          message.replaceChildren();
+          message.className = "";
+          try {
+          const formData = new FormData(revisionForm);
+          const arrangementType = formData.get("arrangement_type");
+
+          const payload = {
+            arrangement_type: arrangementType,
+            invoice_total: String(formData.get("invoice_total")).trim(),
+            reason: String(formData.get("reason")).trim()
+          };
+
+          if (arrangementType === "PAYMENT_PLAN") {
+            const scheduleType = formData.get("schedule_type");
+            const planStartDate = String(
+              formData.get("plan_start_date")
+            ).trim();
+
+            payload.schedule_type = scheduleType;
+            payload.plan_start_date = planStartDate;
+            payload.down_payment_amount =
+              String(formData.get("down_payment_amount") || "").trim()
+              || "0.00";
+
+            if (scheduleType === "CUSTOM") {
+              let customSchedule;
+
+              try {
+                customSchedule = JSON.parse(
+                  String(formData.get("custom_schedule_json"))
+                );
+              } catch {
+                throw new Error(
+                  "The custom schedule must be valid JSON."
+                );
+              }
+
+              if (
+                !Array.isArray(customSchedule) ||
+                customSchedule.length === 0
+              ) {
+                throw new Error(
+                  "Enter at least one custom installment."
+                );
+              }
+
+              const firstEntry = customSchedule[0];
+              const lastEntry = customSchedule[customSchedule.length - 1];
+
+              if (
+                !firstEntry ||
+                !lastEntry ||
+                firstEntry.amount == null ||
+                lastEntry.amount == null ||
+                !lastEntry.due_date
+              ) {
+                throw new Error(
+                  "Each custom entry needs a due_date and amount."
+                );
+              }
+
+              payload.down_payment_due_date = planStartDate;
+              payload.installment_count = customSchedule.length;
+              payload.installment_amount = String(firstEntry.amount);
+              payload.final_installment_amount = String(lastEntry.amount);
+              payload.final_due_date = String(lastEntry.due_date);
+              payload.custom_schedule = customSchedule;
+            } else {
+              payload.term_months = Number(
+                formData.get("term_months")
+              );
+            }
+          }
+
+          submitButton.disabled = true;
+          submitButton.textContent = "Submitting...";
+
+            await api(
+              `/admin/jobs/${encodeURIComponent(jobId)}/payment-agreement/revise`,
+              {
+                method: "POST",
+                body: JSON.stringify(payload)
+              }
+            );
+
+            // Reload the agreement history so the new version and
+            // superseded proposal are both visible.
+            section.remove();
+            await loadAdminPaymentAgreement(jobId, content);
+          } catch (error) {
+            message.className = "notice error";
+            message.textContent =
+              error.message || "Could not finalize the agreement.";
+            submitButton.disabled = false;
+            submitButton.textContent = "Finalize agreement";
+          }
+        });
+      }
+    } catch (error) {
+      if (content.dataset.jobId !== jobId) return;
+
+      section.replaceChildren();
+
+      const heading = document.createElement("h3");
+      heading.textContent = "Payment agreement";
+      const message = document.createElement("p");
+      message.className = "notice error";
+      message.textContent =
+        error.message || "Could not load payment agreement.";
+      section.append(heading, message);
+    }
+  }
 
   async function loadOverview() {
     overview = await api("/admin/overview");
@@ -549,6 +1182,15 @@
   async function loadLeads() {
     leads = await api("/admin/leads");
     renderLeads();
+  }
+  async function loadReviews() {
+    reviews = await api("/admin/homeowner-reviews");
+    renderReviews();
+  }
+
+  async function loadReviewInvitations() {
+    reviewInvitations = await api("/admin/review-invitations");
+    renderReviewInvitations();
   }
 
   async function loadJobs() {
@@ -598,6 +1240,7 @@
     if (!job) return;
 
     const content = $("jobDetailsContent");
+    content.dataset.jobId = jobId;
     content.replaceChildren();
 
     const fields = [
@@ -632,6 +1275,99 @@
 
       content.append(row);
     }
+
+    const rateSection = document.createElement("section");
+    rateSection.style.marginTop = "24px";
+    rateSection.style.paddingTop = "20px";
+    rateSection.style.borderTop = "1px solid var(--admin-border)";
+
+    const rateHeading = document.createElement("h3");
+    rateHeading.textContent = "Referral fee rate";
+
+    const rateDescription = document.createElement("p");
+    rateDescription.className = "sub-cell";
+    rateDescription.textContent =
+      "Manually changing this rate applies regardless of the job's current stage. The effective rate cannot exceed the contractor's default rate.";
+
+    const rateControls = document.createElement("div");
+    rateControls.style.display = "flex";
+    rateControls.style.alignItems = "center";
+    rateControls.style.gap = "10px";
+    rateControls.style.flexWrap = "wrap";
+
+    const rateSelect = document.createElement("select");
+    rateSelect.setAttribute("aria-label", "Job referral fee rate");
+
+    const rateOptions = [
+      ["0", "0%"],
+      ["0.05", "5%"],
+      ["0.1", "10%"],
+    ];
+
+    for (const [value, label] of rateOptions) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      rateSelect.append(option);
+    }
+
+    const currentRate = Number(job.referral_fee_rate ?? 0.10);
+    rateSelect.value = String(currentRate);
+
+    const saveRateButton = document.createElement("button");
+    saveRateButton.type = "button";
+    saveRateButton.textContent = "Save rate";
+    saveRateButton.disabled = !job.contractor_id;
+
+    const rateMessage = document.createElement("span");
+    rateMessage.className = "sub-cell";
+    rateMessage.setAttribute("role", "status");
+
+    if (!job.contractor_id) {
+      rateMessage.textContent =
+        "Assign a contractor before changing this rate.";
+    }
+
+    saveRateButton.addEventListener("click", async () => {
+      const selectedRate = Number(rateSelect.value);
+
+      saveRateButton.disabled = true;
+      rateSelect.disabled = true;
+      rateMessage.textContent = "Saving referral fee rate...";
+
+      try {
+        const result = await api(
+          `/admin/jobs/${encodeURIComponent(job.job_id)}/referral-fee-rate`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              referral_fee_rate: selectedRate,
+            }),
+          }
+        );
+
+        job.referral_fee_rate = result.new_rate;
+        rateSelect.value = String(result.new_rate);
+
+        rateMessage.textContent =
+          `Saved. Effective referral fee rate: ${(result.new_rate * 100).toFixed(0)}%.`;
+
+      } catch (error) {
+        rateMessage.textContent = error.message;
+      } finally {
+        saveRateButton.disabled = !job.contractor_id;
+        rateSelect.disabled = false;
+      }
+    });
+
+    rateControls.append(rateSelect, saveRateButton, rateMessage);
+    rateSection.append(
+      rateHeading,
+      rateDescription,
+      rateControls
+    );
+    content.append(rateSection);
+
     const activity = document.createElement("section");
     activity.style.marginTop = "24px";
     activity.innerHTML = `
@@ -701,6 +1437,7 @@
     void loadAdminLeadPhotos(job.lead_id, content);
     void loadAdminJobPhotos(job.job_id, content);
     void loadAdminJobNotes(job.job_id, content);
+    void loadAdminPaymentAgreement(job.job_id, content);
   }
 
   async function loadAdminJobPhotos(jobId, container) {
@@ -912,6 +1649,148 @@
       </tr>
     `).join("") : '<tr><td colspan="7" class="empty">No matching leads found.</td></tr>';
   }
+  function renderReviews() {
+    const query = $("reviewSearch").value.trim().toLowerCase();
+
+    const rows = reviews.filter((review) => [
+      review.job_id,
+      review.customer_name,
+      review.customer_email,
+      review.company_name,
+      review.contractor_id,
+      review.rating,
+      review.written_feedback,
+      review.discrepancy_statuses
+    ].some((value) =>
+      String(value ?? "").toLowerCase().includes(query)
+    ));
+
+    $("reviewsBody").innerHTML = rows.length ? rows.map((review) => `
+      <tr
+        class="review-row"
+        data-review-id="${escapeHtml(review.review_id)}"
+        tabindex="0"
+        role="button"
+        aria-label="View homeowner review for job ${escapeHtml(review.job_id)}"
+        style="cursor:pointer"
+      >
+        <td>
+          <div class="primary-cell">${escapeHtml(review.job_id || "—")}</div>
+          <div class="sub-cell">${escapeHtml(review.job_status || "")}</div>
+        </td>
+        <td>
+          <div class="primary-cell">${escapeHtml(review.customer_name || "Not provided")}</div>
+          <div class="sub-cell">${escapeHtml(review.customer_email || "")}</div>
+        </td>
+        <td>
+          <div class="primary-cell">${escapeHtml(review.company_name || "—")}</div>
+          <div class="sub-cell">${escapeHtml(review.contractor_id || "")}</div>
+        </td>
+        <td>${escapeHtml(review.rating ?? "—")} / 5</td>
+        <td>${review.total_cost_submitted
+          ? escapeHtml(money(review.total_cost))
+          : "Not reported"}</td>
+        <td>
+          ${Number(review.open_discrepancy_count || 0) > 0
+            ? `<span class="pill red">${escapeHtml(review.open_discrepancy_count)} open</span>`
+            : Number(review.discrepancy_count || 0) > 0
+              ? `<span class="pill gold">${escapeHtml(review.discrepancy_count)} recorded</span>`
+              : `<span class="pill">None</span>`}
+        </td>
+        <td>${escapeHtml(dateLabel(review.created_at))}</td>
+      </tr>
+    `).join("") : `
+      <tr><td colspan="7" class="empty">No matching homeowner reviews found.</td></tr>
+    `;
+  }
+
+    function renderReviewInvitations() {
+    const query = $("reviewInvitationSearch").value.trim().toLowerCase();
+
+    const rows = reviewInvitations.filter((invitation) => [
+      invitation.job_id,
+      invitation.customer_name,
+      invitation.customer_email,
+      invitation.company_name,
+      invitation.delivery_status,
+      invitation.retry_state,
+      invitation.last_error
+    ].some((value) =>
+      String(value ?? "").toLowerCase().includes(query)
+    ));
+
+    $("reviewInvitationsBody").innerHTML = rows.length
+      ? rows.map((invitation) => {
+          const isUnknown =
+            invitation.delivery_status === "UNKNOWN" &&
+            invitation.retry_state === "UNKNOWN";
+
+          return `
+            <tr>
+              <td>
+                <div class="primary-cell">${escapeHtml(invitation.job_id || "—")}</div>
+                <div class="sub-cell">${escapeHtml(invitation.invitation_id || "")}</div>
+              </td>
+              <td>
+                <div class="primary-cell">${escapeHtml(invitation.customer_name || "Not provided")}</div>
+                <div class="sub-cell">${escapeHtml(invitation.customer_email || "")}</div>
+              </td>
+              <td>
+                <div class="primary-cell">${escapeHtml(invitation.company_name || "—")}</div>
+                <div class="sub-cell">${escapeHtml(invitation.contractor_id || "")}</div>
+              </td>
+              <td>${escapeHtml(invitation.delivery_status || "—")}</td>
+              <td>${escapeHtml(invitation.retry_state || "—")}</td>
+              <td>
+                ${escapeHtml(invitation.attempts ?? 0)}
+                <div class="sub-cell">Failure streak: ${escapeHtml(invitation.failure_streak ?? 0)}</div>
+              </td>
+              <td style="white-space:normal;min-width:180px;max-width:300px">
+                ${escapeHtml(invitation.last_error || "—")}
+              </td>
+              <td>${escapeHtml(dateLabel(invitation.next_attempt_at))}</td>
+              <td>${escapeHtml(dateLabel(invitation.expires_at))}</td>
+              <td>
+                ${isUnknown
+                  ? `<button class="btn btn-small resolve-review-invitation"
+                      type="button"
+                      data-invitation-id="${escapeHtml(invitation.invitation_id)}">
+                      Resolve
+                    </button>`
+                  : "—"}
+              </td>
+            </tr>
+          `;
+        }).join("")
+      : `
+        <tr>
+          <td colspan="10" class="empty">No matching review invitations found.</td>
+        </tr>
+      `;
+  }
+
+  function openReviewInvitationResolveDialog(invitationId) {
+    const invitation = reviewInvitations.find(
+      (item) => String(item.invitation_id) === String(invitationId)
+    );
+
+    if (!invitation) return;
+
+    const dialog = $("reviewInvitationResolveDialog");
+    const form = $("reviewInvitationResolveForm");
+
+    form.reset();
+    $("reviewInvitationResolveError").classList.add("hidden");
+
+    $("reviewInvitationResolveDetails").textContent =
+      `Job ${invitation.job_id || "—"} · ` +
+      `${invitation.customer_name || "Homeowner"} · ` +
+      `${invitation.customer_email || "No email"} · ` +
+      `Attempts: ${invitation.attempts ?? 0}`;
+
+    dialog.dataset.invitationId = invitation.invitation_id;
+    dialog.showModal();
+  }
 
   function openAdminLeadDetails(leadId) {
     const lead = leads.find(
@@ -957,6 +1836,195 @@
 
     $("leadDetailsDialog").showModal();
     void loadAdminLeadPhotos(lead.lead_id, content);
+  }
+
+  async function openAdminReviewDetails(reviewId) {
+    const content = $("reviewDetailsContent");
+    content.replaceChildren();
+
+    const loading = document.createElement("p");
+    loading.textContent = "Loading review details…";
+    content.append(loading);
+    $("reviewDetailsDialog").showModal();
+
+    try {
+      const result = await api(
+        `/admin/homeowner-reviews/${encodeURIComponent(reviewId)}`
+      );
+
+      content.replaceChildren();
+
+      const addSection = (title) => {
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        heading.style.margin = "20px 0 10px";
+        content.append(heading);
+      };
+
+      const addField = (label, value) => {
+        const row = document.createElement("p");
+        row.style.margin = "0 0 9px";
+
+        const heading = document.createElement("strong");
+        heading.textContent = `${label}: `;
+
+        row.append(
+          heading,
+          document.createTextNode(
+            value == null || value === "" ? "Not provided" : String(value)
+          )
+        );
+
+        content.append(row);
+      };
+      const addMoneyField = (label, value) => {
+        addField(label, value == null ? "Not provided" : money(value));
+      };
+      const review = result.review;
+
+      addSection("Review and job");
+      [
+        ["Review ID", review.review_id],
+        ["Job ID", review.job_id],
+        ["Job status", review.job_status],
+        ["Lead ID", review.lead_id],
+        ["Service", review.service_type],
+        ["ZIP code", review.zip_code],
+        ["Submitted", dateLabel(review.created_at)]
+      ].forEach(([label, value]) => addField(label, value));
+
+      addSection("Homeowner");
+      [
+        ["Name", review.customer_name],
+        ["Email", review.customer_email],
+        ["Phone", review.customer_phone]
+      ].forEach(([label, value]) => addField(label, value));
+
+      addSection("Contractor");
+      [
+        ["Company", review.company_name],
+        ["Contractor ID", review.contractor_id],
+        ["Contact", review.contractor_contact_name]
+      ].forEach(([label, value]) => addField(label, value));
+
+      addSection("Homeowner feedback");
+      addField("Rating", `${review.rating ?? "—"} / 5`);
+      addField("Written feedback", review.written_feedback);
+      addField(
+        "Homeowner reported total",
+        review.total_cost_submitted
+          ? money(review.total_cost)
+          : "Not submitted"
+      );
+      addField(
+        "Homeowner says payment plan was agreed",
+        review.payment_plan_agreed == null
+          ? "Not recorded"
+          : review.payment_plan_agreed ? "Yes" : "No"
+      );
+      addField("Additional cost comments", review.cost_comments);
+
+      addSection("Payment agreement");
+      if (!result.agreements?.length) {
+        addField("Agreement", "No accepted agreement was found.");
+      }
+
+      for (const agreement of result.agreements || []) {
+        addField("Agreement ID", agreement.agreement_id);
+        addField("Version", agreement.version);
+        addField("Status", agreement.status);
+        addField(
+          "Reference",
+          agreement.reference_type === "DISCREPANCY_RECORDED"
+            ? "Agreement version linked to the recorded discrepancy"
+            : "Current operative agreement; not a historical snapshot"
+        );
+        addField(
+          "Arrangement",
+          agreement.arrangement_type === "PAYMENT_PLAN"
+            ? "Payment plan"
+            : agreement.arrangement_type
+        );
+        addMoneyField("Invoice total", agreement.invoice_total);
+
+        if (agreement.arrangement_type === "PAYMENT_PLAN") {
+          addField("Schedule type", agreement.schedule_type);
+          addMoneyField("Installment amount", agreement.installment_amount);
+          addMoneyField(
+            "Final installment",
+            agreement.final_installment_amount
+          );
+          addField("Installment count", agreement.installment_count);
+          addField("Plan starts", agreement.plan_start_date);
+          addField("Final due date", agreement.final_due_date);
+          addMoneyField("Down payment", agreement.down_payment_amount);
+          addField("Down payment due", agreement.down_payment_due_date);
+
+          if (
+            agreement.schedule_type === "CUSTOM" &&
+            Array.isArray(agreement.custom_schedule)
+          ) {
+            addField("Custom installments", "");
+            for (const [index, installment] of
+              agreement.custom_schedule.entries()) {
+              addField(
+                `Installment ${index + 1}`,
+                `${installment.due_date || "No date"} — ${
+                  installment.amount == null
+                    ? "Not provided"
+                    : money(installment.amount)
+                }`
+              );
+            }
+          }
+        }
+
+        if (agreement.admin_revision_reason) {
+          addField("Admin revision reason", agreement.admin_revision_reason);
+        }
+      }
+
+      addSection("Discrepancies");
+      if (!result.discrepancies?.length) {
+        addField("Discrepancies", "None recorded.");
+      }
+
+      for (const discrepancy of result.discrepancies || []) {
+        addField("Type", discrepancy.discrepancy_type);
+        addField("Status", discrepancy.status);
+        addField("Recorded", dateLabel(discrepancy.created_at));
+
+        const details = discrepancy.details || {};
+        if (discrepancy.discrepancy_type === "TOTAL_COST") {
+          addMoneyField(
+            "Agreement invoice total",
+            details.agreement_invoice_total
+          );
+          addMoneyField(
+            "Homeowner reported total",
+            details.homeowner_reported_total
+          );
+          addMoneyField("Difference", details.difference);
+        } else if (discrepancy.discrepancy_type === "PAYMENT_PLAN") {
+          addField("Agreed arrangement", details.expected_arrangement);
+          addField(
+            "Homeowner reported arrangement",
+            details.homeowner_reported_arrangement
+          );
+        }
+
+        if (discrepancy.resolved_at) {
+          addField("Resolved", dateLabel(discrepancy.resolved_at));
+          addField("Resolved by", discrepancy.resolved_by_username);
+          addField("Resolution notes", discrepancy.resolution_notes);
+        }
+      }
+    } catch (error) {
+      content.replaceChildren();
+      const message = document.createElement("p");
+      message.textContent = `Could not load review details: ${error.message}`;
+      content.append(message);
+    }
   }
 
   async function loadContractors() {
@@ -1012,6 +2080,7 @@
       const labels = {
         ContractorCreated: "Contractor profile created",
         ContractorMatchingProfileUpdated: "Matching profile updated",
+        ContractorReferralFeeRateUpdated: "Default referral fee rate updated",
         OpportunityCreated: "Opportunity sent to contractor",
         OpportunityAccepted: "Opportunity accepted",
         OpportunityDeclined: "Opportunity declined",
@@ -1057,6 +2126,95 @@
         "p",
         `${contractor.company_name} · ${contractor.contractor_id}`
       );
+
+      addSectionHeading("Default Referral Fee Rate");
+
+      const rateDescription = document.createElement("p");
+      rateDescription.className = "sub-cell";
+      rateDescription.textContent =
+        "0% suspends new opportunity matching. Reducing the rate adjusts eligible active jobs that have not had payment information submitted. Increasing the rate applies only to future jobs.";
+
+      content.append(rateDescription);
+
+      const rateControls = document.createElement("div");
+      rateControls.style.display = "flex";
+      rateControls.style.alignItems = "center";
+      rateControls.style.gap = "10px";
+      rateControls.style.flexWrap = "wrap";
+
+      const rateSelect = document.createElement("select");
+      rateSelect.setAttribute(
+        "aria-label",
+        "Contractor default referral fee rate"
+      );
+
+      for (const [value, label] of [
+        ["0", "0%"],
+        ["0.05", "5%"],
+        ["0.1", "10%"],
+      ]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        rateSelect.append(option);
+      }
+
+      rateSelect.value = String(
+        Number(contractor.default_referral_fee_rate ?? 0.10)
+      );
+
+      const saveRateButton = document.createElement("button");
+      saveRateButton.type = "button";
+      saveRateButton.className = "btn";
+      saveRateButton.textContent = "Save default rate";
+
+      const rateMessage = document.createElement("span");
+      rateMessage.className = "sub-cell";
+      rateMessage.setAttribute("role", "status");
+
+      saveRateButton.addEventListener("click", async () => {
+        const selectedRate = Number(rateSelect.value);
+
+        saveRateButton.disabled = true;
+        rateSelect.disabled = true;
+        rateMessage.textContent = "Saving contractor default rate...";
+
+        try {
+          const result = await api(
+            `/admin/contractors/${encodeURIComponent(contractor.contractor_id)}/referral-fee-rate`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                referral_fee_rate: selectedRate,
+              }),
+            }
+          );
+
+          contractor.default_referral_fee_rate = result.new_rate;
+
+          rateSelect.value = String(result.new_rate);
+
+          const adjustedCount = result.adjusted_jobs || 0;
+          rateMessage.textContent =
+            `Saved. Default rate: ${(result.new_rate * 100).toFixed(0)}%. ` +
+            `${adjustedCount} existing job(s) adjusted.`;
+
+          await loadContractors();
+
+        } catch (error) {
+          rateMessage.textContent = error.message;
+        } finally {
+          saveRateButton.disabled = false;
+          rateSelect.disabled = false;
+        }
+      });
+
+      rateControls.append(
+        rateSelect,
+        saveRateButton,
+        rateMessage
+      );
+      content.append(rateControls);
 
       addSectionHeading("Jobs");
 
@@ -1277,7 +2435,14 @@
     $("refreshTop").disabled = true;
 
     try {
-      await Promise.all([loadOverview(), loadLeads(), loadContractors(), loadJobs()]);
+      await Promise.all([
+        loadOverview(),
+        loadLeads(),
+        loadReviews(),
+        loadReviewInvitations(),
+        loadContractors(),
+        loadJobs()
+      ]);
       setConnected(true, "Authenticated with a secure administrator session.");
       $("lastUpdated").textContent = "Updated " + new Date().toLocaleTimeString();
       $("globalMessage").classList.add("hidden");
@@ -1292,6 +2457,8 @@
     leads = [];
     contractors = [];
     jobs = [];
+    reviews = [];
+    reviewInvitations = [];
     overview = null;
 
     ["metricLeads", "metricContractors", "metricOpportunities", "metricJobs", "metricFees"]
@@ -1305,6 +2472,12 @@
 
     $("jobsBody").innerHTML =
       '<tr><td colspan="6" class="empty">Sign in to load jobs.</td></tr>';
+
+    $("reviewsBody").innerHTML =
+      '<tr><td colspan="7" class="empty">Sign in to load homeowner reviews.</td></tr>';
+
+    $("reviewInvitationsBody").innerHTML =
+      '<tr><td colspan="10" class="empty">Sign in to load review invitations.</td></tr>';
 
     $("jobsMessage").textContent = "";
 
@@ -1432,6 +2605,116 @@
 
   $("closeLeadDetails").addEventListener("click", () => {
     $("leadDetailsDialog").close();
+  });
+
+  $("refreshReviews").addEventListener("click", async () => {
+    try {
+      await loadReviews();
+      globalMessage("Homeowner reviews refreshed.", "success");
+    } catch (error) {
+      globalMessage(error.message, "error");
+    }
+  });
+
+  $("reviewSearch").addEventListener("input", renderReviews);
+
+  $("refreshReviewInvitations").addEventListener("click", async () => {
+    try {
+      await loadReviewInvitations();
+      globalMessage("Review invitations refreshed.", "success");
+    } catch (error) {
+      globalMessage(error.message, "error");
+    }
+  });
+
+  $("reviewInvitationSearch").addEventListener(
+    "input",
+    renderReviewInvitations
+  );
+
+  $("reviewInvitationsBody").addEventListener("click", (event) => {
+    const button = event.target.closest(".resolve-review-invitation");
+    if (!button) return;
+
+    openReviewInvitationResolveDialog(button.dataset.invitationId);
+  });
+
+  $("closeReviewInvitationResolve").addEventListener("click", () => {
+    $("reviewInvitationResolveDialog").close();
+  });
+
+  $("reviewInvitationResolveForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const dialog = $("reviewInvitationResolveDialog");
+    const invitationId = dialog.dataset.invitationId;
+    const action = $("reviewInvitationResolveAction").value;
+    const reason = $("reviewInvitationResolveReason").value.trim();
+    const submitButton = $("submitReviewInvitationResolve");
+    const errorElement = $("reviewInvitationResolveError");
+
+    if (!invitationId || reason.length < 3) return;
+
+    if (
+      action === "RESEND" &&
+      !window.confirm(
+        "The original invitation may already have been delivered. " +
+        "Resending may send a duplicate email. Do you want to continue?"
+      )
+    ) {
+      return;
+    }
+
+    submitButton.disabled = true;
+    errorElement.classList.add("hidden");
+
+    try {
+      await api(
+        `/admin/review-invitations/${encodeURIComponent(invitationId)}/resolve`,
+        {
+          method: "POST",
+          body: JSON.stringify({ action, reason })
+        }
+      );
+
+      dialog.close();
+
+      try {
+        await loadReviewInvitations();
+        globalMessage("Review invitation resolution saved.", "success");
+      } catch (error) {
+        globalMessage(
+          `Resolution saved, but the invitation list could not be refreshed: ${error.message}`,
+          "error"
+        );
+      }
+    } catch (error) {
+      errorElement.textContent = error.message;
+      errorElement.classList.remove("hidden");
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  $("reviewsBody").addEventListener("click", (event) => {
+    const row = event.target.closest("tr.review-row");
+    if (row) {
+      openAdminReviewDetails(row.dataset.reviewId);
+    }
+  });
+
+  $("reviewsBody").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+
+    const row = event.target.closest("tr.review-row");
+    if (!row) return;
+
+    event.preventDefault();
+    openAdminReviewDetails(row.dataset.reviewId);
+  });
+
+  $("closeReviewDetails").addEventListener("click", () => {
+    $("reviewDetailsDialog").close();
   });
 
   $("contractorSearch").addEventListener("input", renderContractors);

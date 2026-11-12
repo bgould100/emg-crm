@@ -107,10 +107,11 @@ def respond_to_opportunity(
                         "This contractor is currently suspended from receiving opportunities."
                     )
 
-                referral_fee_rate = (
+                referral_fee_rate = min(
+                    default_rate,
                     record["referral_fee_rate_override"]
                     if record["referral_fee_rate_override"] is not None
-                    else default_rate
+                    else default_rate,
                 )
 
             if decision == "accept":

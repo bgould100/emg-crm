@@ -678,8 +678,6 @@
       <nav class="tabs" aria-label="Dashboard sections">
         <button class="tab active" data-tab="opportunities" type="button">Opportunities</button>
         <button class="tab" data-tab="jobs" type="button">My Jobs</button>
-        <button class="tab" data-tab="collections" type="button">Collections</button>
-        <button class="tab" data-tab="agreements" type="button">Payment Agreements</button>
         <button class="tab" data-tab="profile" type="button">Matching Profile</button>
       </nav>
 
@@ -697,71 +695,6 @@
           <button class="btn secondary" id="refreshJobs" type="button">Refresh</button>
         </div>
         <div id="jobsList"><p class="empty">Your jobs will appear here.</p></div>
-      </section>
-
-      <section id="panel-collections" class="card hidden">
-        <h2>Report a collection</h2>
-        <p class="muted small">Record a customer payment against one of your jobs.</p>
-        <form id="collectionForm">
-          <label for="collectionJob">Job</label>
-          <select id="collectionJob" required><option value="">Load your jobs first</option></select>
-          <div class="grid">
-            <div class="field">
-              <label for="collectionAmount">Amount collected ($)</label>
-              <input id="collectionAmount" type="number" min="0.01" step="0.01" required>
-            </div>
-            <div class="field">
-              <label for="collectionDate">Date collected</label>
-              <input id="collectionDate" type="date" required>
-            </div>
-          </div>
-          <button class="btn" type="submit" style="margin-top:16px">Submit collection</button>
-        </form>
-      </section>
-
-      <section id="panel-agreements" class="card hidden">
-        <h2>Payment agreements</h2>
-        <p class="muted small">View or create an agreement for one of your jobs.</p>
-        <label for="agreementJob">Job</label>
-        <select id="agreementJob"><option value="">Load your jobs first</option></select>
-        <div class="row" style="margin-top:12px">
-          <button id="loadAgreement" class="btn secondary" type="button">View agreement</button>
-        </div>
-        <div id="agreementResult" style="margin-top:15px"></div>
-        <details style="margin-top:18px">
-          <summary style="cursor:pointer;font-weight:700">Create payment agreement</summary>
-          <form id="agreementForm">
-            <label for="arrangementType">Arrangement type</label>
-            <input id="arrangementType" placeholder="e.g. full_payment, installments" required>
-            <label for="invoiceTotal">Invoice total ($)</label>
-            <input id="invoiceTotal" type="number" min="0.01" step="0.01" required>
-            <label for="scheduleType">Schedule type (optional)</label>
-            <input id="scheduleType" placeholder="e.g. one_time, weekly, monthly">
-            <div class="grid">
-              <div class="field">
-                <label for="installmentAmount">Installment amount ($)</label>
-                <input id="installmentAmount" type="number" min="0.01" step="0.01">
-              </div>
-              <div class="field">
-                <label for="finalInstallmentAmount">Final installment ($)</label>
-                <input id="finalInstallmentAmount" type="number" min="0.01" step="0.01">
-              </div>
-            </div>
-            <div class="grid">
-              <div class="field">
-                <label for="planStartDate">Plan start date</label>
-                <input id="planStartDate" type="date">
-              </div>
-              <div class="field">
-                <label for="finalDueDate">Final due date</label>
-                <input id="finalDueDate" type="date">
-              </div>
-            </div>
-            <label for="customSchedule">Custom schedule (optional JSON)</label>
-            <textarea id="customSchedule" placeholder='{"payments": []}'></textarea>
-            <button class="btn" type="submit" style="margin-top:16px">Create agreement</button>
-          </form>
-        </details>
       </section>
 
       <section id="panel-profile" class="card hidden">
@@ -1540,10 +1473,559 @@ async function loadJobNotes(container, jobId) {
         } else {
           for (const job of jobsCache) list.append(renderJob(job));
         }
-        populateJobSelectors();
       } catch (error) {
         renderEmpty(list, error.message);
       }
+    }
+
+    async function renderPaymentCompletionWorkflow(container, jobId, onCompleted) {
+      container.hidden = false;
+      container.replaceChildren(el("p", "muted", "Loading payment agreement..."));
+
+      const path = `/contractor/jobs/${encodeURIComponent(jobId)}/payment-agreement`;
+
+      function money(value) {
+        return Number(value || 0).toLocaleString("en-US", {
+          style: "currency",
+          currency: "USD"
+        });
+      }
+
+      function showNotice(text, kind = "info") {
+        const notice = el("p", `notice ${kind}`, text);
+        container.append(notice);
+        return notice;
+      }
+
+      function showProposalForm() {
+        container.replaceChildren(
+          el("h3", "", "Payment completion"),
+          el("p", "muted small",
+            "Enter the invoice total and payment arrangement. EMG calculates the payment schedule.")
+        );
+
+        const form = el("form");
+        const arrangementLabel = el("label", "", "Payment arrangement");
+        const arrangement = el("select");
+        arrangement.append(
+          new Option("Paid in full", "PAID_IN_FULL"),
+          new Option("Payment agreement", "PAYMENT_PLAN")
+        );
+
+        const totalLabel = el("label", "", "Invoice total ($)");
+        const total = el("input");
+        total.type = "number";
+        total.min = "0.01";
+        total.step = "0.01";
+        total.required = true;
+
+        const planFields = el("div");
+        planFields.hidden = true;
+
+        const frequencyLabel = el("label", "", "Payment frequency");
+        const frequency = el("select");
+        frequency.append(
+          new Option("Weekly", "WEEKLY"),
+          new Option("Biweekly", "BIWEEKLY"),
+          new Option("Monthly", "MONTHLY")
+        );
+
+        const lengthLabel = el("label", "", "Agreement length (months)");
+        const length = el("input");
+        length.type = "number";
+        length.min = "1";
+        length.step = "1";
+
+        const startLabel = el("label", "", "Plan start date");
+        const start = el("input");
+        start.type = "date";
+
+        const downLabel = el("label", "", "Down-payment amount ($, optional)");
+        const down = el("input");
+        down.type = "number";
+        down.min = "0";
+        down.step = "0.01";
+        down.value = "0";
+
+        planFields.append(
+          frequencyLabel, frequency,
+          lengthLabel, length,
+          startLabel, start,
+          downLabel, down
+        );
+
+        function updatePlanFields() {
+          const isPlan = arrangement.value === "PAYMENT_PLAN";
+          planFields.hidden = !isPlan;
+          length.required = isPlan;
+          start.required = isPlan;
+        }
+
+        arrangement.addEventListener("change", updatePlanFields);
+        updatePlanFields();
+
+        const submit = el("button", "btn", "Submit payment proposal");
+        submit.type = "submit";
+        const cancel = actionButton("Cancel", "secondary", () => {
+          container.hidden = true;
+          container.replaceChildren();
+        });
+
+        form.append(
+          arrangementLabel, arrangement,
+          totalLabel, total,
+          planFields,
+          el("div", "row"),
+        );
+        const actions = el("div", "row");
+        actions.append(submit, cancel);
+        form.append(actions);
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          submit.disabled = true;
+
+          const body = {
+            arrangement_type: arrangement.value,
+            invoice_total: Number(total.value)
+          };
+
+          if (arrangement.value === "PAYMENT_PLAN") {
+            body.schedule_type = frequency.value;
+            body.term_months = Number(length.value);
+            body.plan_start_date = start.value;
+            body.down_payment_amount = Number(down.value || 0);
+          }
+
+          try {
+            await request(path, {
+              method: "POST",
+              body: JSON.stringify(body)
+            });
+            await loadAgreement();
+          } catch (error) {
+            showNotice(error.message, "error");
+            submit.disabled = false;
+          }
+        });
+
+        container.append(form);
+      }
+
+      function showAgreement(data) {
+        container.replaceChildren();
+
+        const agreement = data?.agreement;
+
+        if (!agreement) {
+          showProposalForm();
+          return;
+        }
+
+        container.append(
+          el("h3", "", "Payment agreement"),
+          el("p", "muted small",
+            `Proposal version ${agreement.version} · ${pretty(agreement.status)}`)
+        );
+
+        const summary = el("div", "item");
+        summary.append(
+          el("p", "", `Invoice total: ${money(agreement.invoice_total)}`),
+          el("p", "", `Arrangement: ${pretty(agreement.arrangement_type)}`)
+        );
+
+        if (agreement.arrangement_type === "PAYMENT_PLAN") {
+          summary.append(
+            el("p", "", `Frequency: ${pretty(agreement.schedule_type)}`),
+            el("p", "", `Scheduled installments: ${agreement.installment_count}`),
+            el("p", "", `Regular installment: ${money(agreement.installment_amount)}`)
+          );
+
+          if (
+            agreement.final_installment_amount != null &&
+            Number(agreement.final_installment_amount) !== Number(agreement.installment_amount)
+          ) {
+            summary.append(
+              el("p", "", `Final installment: ${money(agreement.final_installment_amount)}`)
+            );
+          }
+
+          if (Number(agreement.down_payment_amount || 0) > 0) {
+            summary.append(
+              el("p", "", `Down payment: ${money(agreement.down_payment_amount)}`),
+              el("p", "", `Down payment due: ${agreement.down_payment_due_date || "Not specified"}`)
+            );
+          }
+
+          summary.append(
+            el("p", "", `Plan starts: ${agreement.plan_start_date || "Not specified"}`),
+            el("p", "", `Final due date: ${agreement.final_due_date || "Not specified"}`)
+          );
+        }
+
+        const paymentSummary = data.payment_summary || {};
+        summary.append(
+          el("p", "", `Collected so far: ${money(paymentSummary.collected_total)}`),
+          el("p", "", `Remaining balance: ${money(paymentSummary.remaining_balance)}`)
+        );
+        container.append(summary);
+        if (
+          agreement.arrangement_type === "PAYMENT_PLAN" &&
+          data.schedule_error
+        ) {
+          showNotice(
+            `The saved payment schedule could not be verified: ${data.schedule_error}. Please contact EMG.`,
+            "error"
+          );
+          return;
+        }
+
+        if (
+          agreement.arrangement_type === "PAYMENT_PLAN" &&
+          Array.isArray(data.installments)
+        ) {
+          const schedule = el("div", "item");
+          schedule.append(el("h4", "", "Payment schedule"));
+
+          for (const installment of data.installments) {
+            schedule.append(
+              el(
+                "p",
+                "",
+                `${installment.installment_type} #${installment.installment_number}: $${installment.principal_amount} — Due ${installment.due_date}`
+              )
+            );
+          }
+
+          container.append(schedule);
+        }
+
+        if (agreement.status === "PENDING_EMG_REVIEW") {
+          showNotice(
+            "This proposal has been sent to EMG for custom payment terms. It is not approved, and the job cannot yet be marked completed."
+          );
+          if (agreement.emg_review_request_note) {
+            container.append(
+              el("p", "muted small",
+                `Your note to EMG: ${agreement.emg_review_request_note}`)
+            );
+          }
+          return;
+        }
+
+        if (agreement.status === "PENDING_ACCEPTANCE") {
+          showNotice("Review the proposal. Choose one of the three options below.");
+
+          const choices = el("div");
+          choices.className = "row";
+
+          const accept = actionButton("Yes", "", async () => {
+            accept.disabled = true;
+            try {
+              await request(`${path}/accept`, { method: "POST" });
+              await loadAgreement();
+            } catch (error) {
+              showNotice(error.message, "error");
+              accept.disabled = false;
+            }
+          });
+
+          const redo = actionButton("No, redo payment agreement", "secondary", () => {
+            showProposalForm();
+          });
+
+          const sendToEmg = actionButton(
+            "No, send to EMG for custom terms",
+            "secondary",
+            () => {
+              container.append(createReviewRequestForm());
+            }
+          );
+
+          choices.append(accept, redo, sendToEmg);
+          container.append(choices);
+          return;
+        }
+
+        if (
+          agreement.status === "ACCEPTED" ||
+          agreement.status === "ADMIN_REVISED"
+        ) {
+          showNotice(
+            agreement.status === "ADMIN_REVISED"
+              ? "EMG has finalized these terms. Your approval is not required."
+              : "You accepted this payment agreement.",
+            "good"
+          );
+
+          const paidInFull = agreement.arrangement_type === "PAID_IN_FULL";
+          const collected = Number(paymentSummary.collected_total || 0);
+          const invoiceTotal = Number(agreement.invoice_total || 0);
+
+          if (
+            paidInFull &&
+            collected < invoiceTotal &&
+            agreement.status === "ACCEPTED"
+          ) {
+            const remaining = invoiceTotal - collected;
+
+            showNotice(
+              `This agreement was accepted before payment recording became automatic. If the homeowner has paid the full invoice, confirm below to record the remaining ${money(remaining)}.`,
+              "info"
+            );
+
+            const confirmPaidButton = actionButton(
+              "Confirm homeowner paid in full",
+              "",
+              async () => {
+                confirmPaidButton.disabled = true;
+
+                try {
+                  await request(`${path}/accept`, { method: "POST" });
+                  await loadAgreement();
+                } catch (error) {
+                  showNotice(error.message, "error");
+                  confirmPaidButton.disabled = false;
+                }
+              }
+            );
+
+            container.append(confirmPaidButton);
+            return;
+          }
+
+          if (!paidInFull && collected < invoiceTotal) {
+            const remaining = invoiceTotal - collected;
+            const storageKey =
+              `emg-payment-report:${jobId}:${agreement.id}`;
+
+            const paymentForm = el("form", "item");
+            paymentForm.append(
+              el("h4", "", "Record homeowner payment"),
+              el(
+                "p",
+                "muted small",
+                "Enter the amount actually received. Recording a payment creates its referral-fee accrual."
+              )
+            );
+
+            const amountLabel = el("label", "", "Amount received ($)");
+            const amountInput = el("input");
+            amountInput.type = "number";
+            amountInput.min = "0.01";
+            amountInput.max = remaining.toFixed(2);
+            amountInput.step = "0.01";
+            amountInput.required = true;
+
+            const dateLabel = el("label", "", "Date and time received");
+            const dateInput = el("input");
+            dateInput.type = "datetime-local";
+            dateInput.required = true;
+
+            function toLocalDateTimeValue(value) {
+              const date = new Date(value);
+              const local = new Date(
+                date.getTime() - date.getTimezoneOffset() * 60000
+              );
+              return local.toISOString().slice(0, 16);
+            }
+
+            dateInput.value = toLocalDateTimeValue(new Date());
+
+            let pendingReport = null;
+
+            try {
+              const saved = localStorage.getItem(storageKey);
+              if (saved) {
+                pendingReport = JSON.parse(saved);
+
+                if (
+                  !pendingReport ||
+                  typeof pendingReport.key !== "string" ||
+                  typeof pendingReport.amount !== "string" ||
+                  typeof pendingReport.collected_at !== "string"
+                ) {
+                  throw new Error("The saved payment retry data is invalid.");
+                }
+
+                amountInput.value = pendingReport.amount;
+                dateInput.value = toLocalDateTimeValue(
+                  pendingReport.collected_at
+                );
+                amountInput.disabled = true;
+                dateInput.disabled = true;
+
+                showNotice(
+                  "A payment report is awaiting confirmation. Retry it below using the same payment details.",
+                  "info"
+                );
+              }
+            } catch (error) {
+              showNotice(
+                `Payment retry data could not be loaded: ${error.message}`,
+                "error"
+              );
+              return;
+            }
+
+            const formSubmit = el("button", "btn", "Record payment");
+            formSubmit.type = "submit";
+            if (pendingReport) {
+              formSubmit.textContent = "Retry payment report";
+            }
+
+            paymentForm.append(
+              amountLabel,
+              amountInput,
+              dateLabel,
+              dateInput,
+              formSubmit
+            );
+
+            paymentForm.addEventListener("submit", async (event) => {
+              event.preventDefault();
+              formSubmit.disabled = true;
+
+              try {
+                if (!pendingReport) {
+                  const amountText = amountInput.value.trim();
+                  const amount = Number(amountText);
+
+                  if (
+                    !/^\d+(\.\d{1,2})?$/.test(amountText) ||
+                    !Number.isFinite(amount) ||
+                    amount <= 0
+                  ) {
+                    throw new Error(
+                      "Enter a valid payment amount with no more than two decimal places."
+                    );
+                  }
+
+                  if (Math.round(amount * 100) > Math.round(remaining * 100)) {
+                    throw new Error(
+                      `The payment cannot exceed the remaining balance of ${money(remaining)}.`
+                    );
+                  }
+
+                  const collectedDate = new Date(dateInput.value);
+
+                  if (
+                    !dateInput.value ||
+                    Number.isNaN(collectedDate.getTime()) ||
+                    collectedDate > new Date()
+                  ) {
+                    throw new Error(
+                      "Enter a valid collection date and time that is not in the future."
+                    );
+                  }
+
+                  pendingReport = {
+                    key: crypto.randomUUID(),
+                    amount: amountText,
+                    collected_at: collectedDate.toISOString()
+                  };
+
+                  localStorage.setItem(
+                    storageKey,
+                    JSON.stringify(pendingReport)
+                  );
+
+                  amountInput.disabled = true;
+                  dateInput.disabled = true;
+                  formSubmit.textContent = "Retry payment report";
+                }
+
+                await request(
+                  `/contractor/jobs/${encodeURIComponent(jobId)}/collections`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Idempotency-Key": pendingReport.key
+                    },
+                    body: JSON.stringify({
+                      amount: pendingReport.amount,
+                      collected_at: pendingReport.collected_at
+                    })
+                  }
+                );
+
+                localStorage.removeItem(storageKey);
+                await loadAgreement();
+              } catch (error) {
+                showNotice(error.message, "error");
+                formSubmit.disabled = false;
+              }
+            });
+
+            container.append(paymentForm);
+          }
+          if (typeof onCompleted === "function") {
+            const completeButton = actionButton(
+              "Confirm job completed",
+              "",
+              async () => {
+                completeButton.disabled = true;
+                try {
+                  await onCompleted();
+                } catch (error) {
+                  showNotice(error.message, "error");
+                  completeButton.disabled = false;
+                }
+              }
+            );
+            container.append(completeButton);
+          }
+          return;
+        }
+
+        showNotice(
+          "This agreement is not in a state that allows job completion. Please contact EMG.",
+          "error"
+        );
+      }
+
+      function createReviewRequestForm() {
+        const form = el("form");
+        const label = el("label", "", "Optional note for EMG");
+        const note = el("textarea");
+        note.maxLength = 2000;
+        note.rows = 3;
+        note.placeholder = "Describe the custom terms you would like to discuss.";
+
+        const submit = el("button", "btn", "Send to EMG");
+        submit.type = "submit";
+        form.append(label, note, submit);
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          submit.disabled = true;
+          try {
+            await request(`${path}/request-emg-review`, {
+              method: "POST",
+              body: JSON.stringify({ note: note.value.trim() || null })
+            });
+            await loadAgreement();
+          } catch (error) {
+            showNotice(error.message, "error");
+            submit.disabled = false;
+          }
+        });
+
+        return form;
+      }
+
+      async function loadAgreement() {
+        container.replaceChildren(el("p", "muted", "Loading payment agreement..."));
+        try {
+          const data = await request(path);
+          showAgreement(data);
+        } catch (error) {
+          container.replaceChildren();
+          showNotice(error.message, "error");
+        }
+      }
+
+      await loadAgreement();
     }
 
     function renderJob(job) {
@@ -1837,7 +2319,9 @@ async function loadJobNotes(container, jobId) {
       details.append(notesContainer);
 
       void loadJobNotes(notesContainer, job.job_id);
-
+      const paymentWorkflow = el("section", "payment-completion-workflow");
+      paymentWorkflow.hidden = true;
+      details.append(paymentWorkflow);
       const form = el("form", "row");
       const select = el("select");
       select.setAttribute("aria-label", "New job status");
@@ -1857,11 +2341,55 @@ async function loadJobNotes(container, jobId) {
       }
       const save = el("button", "btn", "Update status");
       save.type = "submit";
+
+      const paymentInfoButton = el("button", "btn", "Payment Info");
+      paymentInfoButton.type = "button";
+
+      paymentInfoButton.addEventListener("click", async () => {
+        paymentInfoButton.disabled = true;
+
+        try {
+          await renderPaymentCompletionWorkflow(
+            paymentWorkflow,
+            job.job_id,
+            null
+          );
+        } catch (error) {
+          message(error.message, "error");
+        } finally {
+          paymentInfoButton.disabled = false;
+        }
+      });
+
       form.append(select, save);
+
+      if (
+        job.status === "JOB_COMPLETED" ||
+        job.status === "PAYMENT_RECEIVED"
+      ) {
+        form.append(paymentInfoButton);
+      }
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         save.disabled = true;
+
         try {
+          if (select.value === "JOB_COMPLETED") {
+            await renderPaymentCompletionWorkflow(
+              paymentWorkflow,
+              job.job_id,
+              async () => {
+                await request(`/jobs/${encodeURIComponent(job.job_id)}/status`, {
+                  method: "PATCH",
+                  body: JSON.stringify({ status: "JOB_COMPLETED" })
+                });
+                message("Job marked as completed.", "good");
+                await loadJobs();
+              }
+            );
+            return;
+          }
+
           await request(`/jobs/${encodeURIComponent(job.job_id)}/status`, {
             method: "PATCH",
             body: JSON.stringify({ status: select.value })
@@ -1876,19 +2404,6 @@ async function loadJobNotes(container, jobId) {
       });
       details.append(form);
       return card;
-    }
-
-    function populateJobSelectors() {
-      for (const id of ["collectionJob", "agreementJob"]) {
-        const select = $(id);
-        const oldValue = select.value;
-        select.replaceChildren();
-        select.append(new Option("Choose a job…", ""));
-        for (const job of jobsCache) {
-          select.append(new Option(`${pretty(job.status)} · ${job.job_id}`, job.job_id));
-        }
-        if (jobsCache.some(job => job.job_id === oldValue)) select.value = oldValue;
-      }
     }
 
     $("loginForm").addEventListener("submit", async (event) => {
@@ -2064,79 +2579,6 @@ async function loadJobNotes(container, jobId) {
             }
             message("");
         });
-    });
-
-    $("collectionDate").value = new Date().toISOString().slice(0, 10);
-    $("collectionForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = event.submitter;
-      button.disabled = true;
-      try {
-        const jobId = $("collectionJob").value;
-        await request(`/contractor/jobs/${encodeURIComponent(jobId)}/collections`, {
-          method: "POST",
-          body: JSON.stringify({
-            amount: Number($("collectionAmount").value),
-            collected_at: new Date(`${$("collectionDate").value}T12:00:00`).toISOString()
-          })
-        });
-        message("Collection report submitted.", "good");
-        $("collectionAmount").value = "";
-      } catch (error) {
-        message(error.message, "error");
-      } finally {
-        button.disabled = false;
-      }
-    });
-
-    $("loadAgreement").addEventListener("click", async () => {
-      const jobId = $("agreementJob").value;
-      if (!jobId) return message("Choose a job first.", "error");
-      const resultBox = $("agreementResult");
-      resultBox.textContent = "Loading agreement…";
-      try {
-        const data = await request(`/contractor/jobs/${encodeURIComponent(jobId)}/payment-agreement`);
-        resultBox.replaceChildren(el("pre", "small", JSON.stringify(data, null, 2)));
-        resultBox.firstChild.style.whiteSpace = "pre-wrap";
-        resultBox.firstChild.style.overflowWrap = "anywhere";
-      } catch (error) {
-        resultBox.textContent = error.message;
-      }
-    });
-
-    $("agreementForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = event.submitter;
-      const jobId = $("agreementJob").value;
-      if (!jobId) return message("Choose a job first.", "error");
-      const body = {
-        arrangement_type: $("arrangementType").value.trim(),
-        invoice_total: Number($("invoiceTotal").value),
-        schedule_type: $("scheduleType").value.trim() || null,
-        installment_amount: $("installmentAmount").value ? Number($("installmentAmount").value) : null,
-        final_installment_amount: $("finalInstallmentAmount").value ? Number($("finalInstallmentAmount").value) : null,
-        plan_start_date: $("planStartDate").value || null,
-        final_due_date: $("finalDueDate").value || null,
-        custom_schedule: null
-      };
-      if ($("customSchedule").value.trim()) {
-        try { body.custom_schedule = JSON.parse($("customSchedule").value); }
-        catch { return message("Custom schedule must be valid JSON.", "error"); }
-      }
-      button.disabled = true;
-      try {
-        const result = await request(`/contractor/jobs/${encodeURIComponent(jobId)}/payment-agreement`, {
-          method: "POST",
-          body: JSON.stringify(body)
-        });
-        $("agreementResult").replaceChildren(el("pre", "small", JSON.stringify(result, null, 2)));
-        $("agreementResult").firstChild.style.whiteSpace = "pre-wrap";
-        message("Payment agreement created.", "good");
-      } catch (error) {
-        message(error.message, "error");
-      } finally {
-        button.disabled = false;
-      }
     });
 
     async function initialize() {

@@ -3,6 +3,13 @@ import json
 from typing import Any, Literal
 
 from app.database.connection import get_connection
+from app.services.payment_agreements import (
+    _installments_from_saved_agreement,
+)
+from app.services.review_tokens import (
+    generate_review_token,
+    hash_review_token,
+)
 
 
 JobStatus = Literal[
@@ -116,6 +123,165 @@ def update_job_status(
                     f"Cannot change job status from {current_status} "
                     f"to {new_status}."
                 )
+            if new_status == "JOB_COMPLETED":
+                # The latest agreement version must be operative.
+                cursor.execute(
+                    """
+                    SELECT
+                        id,
+                        version,
+                        arrangement_type,
+                        invoice_total,
+                        down_payment_amount,
+                        down_payment_due_date,
+                        plan_start_date,
+                        schedule_type,
+                        installment_count,
+                        installment_amount,
+                        final_installment_amount,
+                        final_due_date,
+                        custom_schedule,
+                        status,
+                        admin_revised_at
+                    FROM job_payment_agreements
+                    WHERE job_id = %s
+                    ORDER BY version DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (record["job_pk"],),
+                )
+                agreement = cursor.fetchone()
+
+                if agreement is None:
+                    raise ValueError(
+                        "A payment agreement must be submitted and "
+                        "approved before the job can be completed."
+                    )
+
+                if agreement["status"] not in (
+                    "ACCEPTED",
+                    "ADMIN_REVISED",
+                ):
+                    raise ValueError(
+                        "The latest payment agreement is not approved. "
+                        "Accept the agreement or wait for EMG to finalize "
+                        "the revised terms before completing the job."
+                    )
+
+                if agreement["arrangement_type"] == "PAID_IN_FULL":
+                    # Only active, contractor-reported collections count.
+                    cursor.execute(
+                        """
+                        SELECT COALESCE(SUM(amount), 0) AS collected_total
+                        FROM job_collections
+                        WHERE job_id = %s
+                          AND report_status = 'ACTIVE'
+                        """,
+                        (record["job_pk"],),
+                    )
+                    collection_record = cursor.fetchone()
+
+                    if (
+                        collection_record["collected_total"]
+                        < agreement["invoice_total"]
+                    ):
+                        raise ValueError(
+                            "The reported collections do not yet cover "
+                            "the full invoice total. Record the remaining "
+                            "payment before completing the job."
+                        )
+
+                elif agreement["arrangement_type"] == "PAYMENT_PLAN":
+                    # Reconstruct the authoritative schedule from the
+                    # approved agreement terms.
+                    collected_total = Decimal("0.00")
+
+                    if agreement["status"] == "ADMIN_REVISED":
+                        cursor.execute(
+                            """
+                            SELECT COALESCE(SUM(amount), 0) AS collected_total
+                            FROM job_collections
+                            WHERE job_id = %s
+                              AND report_status = 'ACTIVE'
+                              AND reported_at <= %s
+                            """,
+                            (
+                                record["job_pk"],
+                                agreement["admin_revised_at"],
+                            ),
+                        )
+                        collection_record = cursor.fetchone()
+                        collected_total = Decimal(
+                            str(collection_record["collected_total"])
+                        )
+                    try:
+                        expected_installments = (
+                            _installments_from_saved_agreement(
+                                agreement,
+                                collected_total=collected_total,
+                            )
+                        )
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise ValueError(
+                            "The approved payment agreement contains "
+                            "invalid schedule terms. Please contact EMG "
+                            "before completing the job."
+                        ) from exc
+
+                    # Retrieve every non-cancelled installment record.
+                    cursor.execute(
+                        """
+                        SELECT
+                            installment_number,
+                            installment_type,
+                            principal_amount,
+                            due_date
+                        FROM job_installments
+                        WHERE agreement_id = %s
+                          AND status <> 'CANCELLED'
+                        ORDER BY installment_number
+                        """,
+                        (agreement["id"],),
+                    )
+                    saved_installments = cursor.fetchall()
+
+                    # The saved rows must match the calculated schedule
+                    # exactly, including every amount and due date.
+                    schedule_matches = (
+                        len(saved_installments)
+                        == len(expected_installments)
+                    )
+
+                    if schedule_matches:
+                        for saved, expected in zip(
+                            saved_installments,
+                            expected_installments,
+                        ):
+                            if (
+                                saved["installment_number"]
+                                != expected["installment_number"]
+                                or saved["installment_type"]
+                                != expected["installment_type"]
+                                or saved["principal_amount"]
+                                != expected["principal_amount"]
+                                or saved["due_date"]
+                                != expected["due_date"]
+                            ):
+                                schedule_matches = False
+                                break
+
+                    if not schedule_matches:
+                        raise ValueError(
+                            "The approved payment plan does not match "
+                            "its complete calculated installment schedule. "
+                            "Please contact EMG before completing the job."
+                        )
+
+                else:
+                    raise ValueError(
+                        "The latest payment agreement has an unsupported "
+                        "arrangement type. Please contact EMG."
+                    )
 
             cursor.execute(
                 """
@@ -203,6 +369,7 @@ def update_job_status(
                             ELSE NULL
                         END
                     )
+                    RETURNING id
                     """,
                     (
                         record["job_pk"],
@@ -211,6 +378,18 @@ def update_job_status(
                         retry_state,
                         retry_state,
                     ),
+                )
+                invitation = cursor.fetchone()
+                token = generate_review_token(invitation["id"])
+                token_hash = hash_review_token(token)
+
+                cursor.execute(
+                    """
+                    UPDATE homeowner_review_invitations
+                    SET token_hash = %s
+                    WHERE id = %s
+                    """,
+                    (token_hash, invitation["id"]),
                 )
 
             winning_contractors = None

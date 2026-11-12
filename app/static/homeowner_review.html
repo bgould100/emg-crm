@@ -1,0 +1,694 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Homeowner Feedback | EliteMatch Group</title>
+
+    <style>
+        :root {
+            --background: #101114;
+            --surface: #191b20;
+            --surface-light: #22252c;
+            --border: #343740;
+            --gold: #d6ad55;
+            --gold-hover: #e8c575;
+            --text: #f1f1f1;
+            --muted: #a6a8af;
+            --green: #42b883;
+            --red: #e36b6b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            padding: 40px 18px;
+            background: var(--background);
+            color: var(--text);
+            font-family: Arial, Helvetica, sans-serif;
+            line-height: 1.6;
+        }
+
+        .page {
+            width: 100%;
+            max-width: 680px;
+            margin: 0 auto;
+        }
+
+        .brand {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .brand-name {
+            color: var(--gold);
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 2px;
+        }
+
+        .brand-subtitle {
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 11px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        .card {
+            padding: 34px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 15px 45px rgba(0, 0, 0, 0.25);
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            color: var(--gold);
+            font-size: 27px;
+            line-height: 1.3;
+        }
+
+        .intro {
+            margin: 0 0 28px;
+            color: var(--muted);
+        }
+
+        .section {
+            margin-top: 27px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        .section h2 {
+            margin: 0 0 12px;
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        label,
+        .field-label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .help-text {
+            margin: -2px 0 14px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        textarea,
+        input[type="number"] {
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--surface-light);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            font: inherit;
+        }
+
+        textarea {
+            min-height: 115px;
+            resize: vertical;
+        }
+
+        textarea:focus,
+        input:focus {
+            outline: 2px solid var(--gold);
+            outline-offset: 2px;
+        }
+
+        .rating {
+            display: flex;
+            gap: 9px;
+            margin: 12px 0;
+        }
+
+        .star {
+            padding: 2px;
+            background: transparent;
+            border: none;
+            color: #656873;
+            cursor: pointer;
+            font-size: 38px;
+            line-height: 1;
+        }
+
+        .star.selected,
+        .star:hover {
+            color: var(--gold);
+        }
+
+        .rating-description {
+            min-height: 22px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            margin: 10px 0;
+            padding: 13px 15px;
+            background: var(--surface-light);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            cursor: pointer;
+            font-weight: 400;
+        }
+
+        .radio-option:has(input:checked) {
+            border-color: var(--gold);
+        }
+
+        .radio-option input {
+            accent-color: var(--gold);
+        }
+
+        .checkbox-option {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin: 12px 0;
+            font-weight: 400;
+        }
+
+        .checkbox-option input {
+            margin-top: 5px;
+            accent-color: var(--gold);
+        }
+
+        .cost-fields {
+            margin-top: 18px;
+        }
+
+        .cost-fields[hidden] {
+            display: none;
+        }
+
+        .field-group {
+            margin-bottom: 18px;
+        }
+
+        .submit-button {
+            width: 100%;
+            margin-top: 30px;
+            padding: 14px 20px;
+            background: var(--gold);
+            border: none;
+            border-radius: 7px;
+            color: #171717;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 700;
+            transition: background 0.2s ease;
+        }
+
+        .submit-button:hover {
+            background: var(--gold-hover);
+        }
+
+        .submit-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .status {
+            margin: 0 0 20px;
+            padding: 13px 15px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            font-size: 14px;
+        }
+
+        .status.error {
+            background: rgba(227, 107, 107, 0.10);
+            border-color: var(--red);
+            color: #ffaaaa;
+        }
+
+        .status.success {
+            background: rgba(66, 184, 131, 0.10);
+            border-color: var(--green);
+            color: #8de0b9;
+        }
+
+        .status.info {
+            background: rgba(214, 173, 85, 0.08);
+            border-color: var(--gold);
+            color: var(--gold-hover);
+        }
+
+        .status[hidden] {
+            display: none;
+        }
+
+        .form-content[hidden] {
+            display: none;
+        }
+
+        .footer {
+            margin-top: 24px;
+            color: var(--muted);
+            font-size: 12px;
+            text-align: center;
+        }
+
+        @media (max-width: 520px) {
+            body {
+                padding: 22px 12px;
+            }
+
+            .card {
+                padding: 23px 19px;
+            }
+
+            h1 {
+                font-size: 23px;
+            }
+
+            .star {
+                font-size: 34px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="page">
+        <header class="brand">
+            <div class="brand-name">ELITEMATCH GROUP</div>
+            <div class="brand-subtitle">Homeowner Feedback</div>
+        </header>
+
+        <section class="card">
+            <h1>How did your project go?</h1>
+
+            <p class="intro">
+                Thank you for using EliteMatch Group. Your feedback helps us
+                understand your experience and maintain accurate records
+                of completed projects.
+            </p>
+
+            <div id="statusMessage" class="status info" role="status">
+                Validating your review link...
+            </div>
+
+            <form id="reviewForm" class="form-content" hidden>
+                <section>
+                    <h2>Overall experience</h2>
+
+                    <p class="help-text">
+                        How would you rate your overall experience with this project?
+                    </p>
+
+                    <div
+                        class="rating"
+                        id="ratingButtons"
+                        role="group"
+                        aria-label="Overall rating"
+                    >
+                        <button type="button" class="star" data-rating="1"
+                            aria-label="1 star">★</button>
+                        <button type="button" class="star" data-rating="2"
+                            aria-label="2 stars">★</button>
+                        <button type="button" class="star" data-rating="3"
+                            aria-label="3 stars">★</button>
+                        <button type="button" class="star" data-rating="4"
+                            aria-label="4 stars">★</button>
+                        <button type="button" class="star" data-rating="5"
+                            aria-label="5 stars">★</button>
+                    </div>
+
+                    <div id="ratingDescription" class="rating-description">
+                        Select a rating from 1 to 5.
+                    </div>
+                </section>
+
+                <section class="section">
+                    <h2>Written feedback</h2>
+
+                    <p class="help-text">
+                        Is there anything you'd like to share about your experience?
+                        This is optional.
+                    </p>
+
+                    <textarea
+                        id="writtenFeedback"
+                        maxlength="5000"
+                        placeholder="Share your experience..."
+                    ></textarea>
+                </section>
+
+                <section class="section">
+                    <h2>Final project cost</h2>
+
+                    <p class="help-text">
+                        If you'd like, you can report the final total cost
+                        of the project.
+                    </p>
+
+                    <label class="checkbox-option">
+                        <input
+                            type="checkbox"
+                            id="submitCost"
+                        >
+                        <span>
+                            I would like to provide the final total cost.
+                        </span>
+                    </label>
+
+                    <div id="costFields" class="cost-fields" hidden>
+                        <div class="field-group">
+                            <label for="totalCost">
+                                Final total cost ($)
+                            </label>
+
+                            <input
+                                type="number"
+                                id="totalCost"
+                                min="0"
+                                max="9999999999.99"
+                                step="0.01"
+                                placeholder="0.00"
+                            >
+                        </div>
+
+                        <div class="field-group">
+                            <label for="costComments">
+                                Comments about the final cost (optional)
+                            </label>
+
+                            <textarea
+                                id="costComments"
+                                maxlength="5000"
+                                placeholder="Optional comments about the final cost..."
+                            ></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <h2>Payment arrangement</h2>
+
+                    <p class="help-text">
+                        Please indicate which of the following describes
+                        how the job was paid for.
+                    </p>
+
+                    <div class="field-label">The job was:</div>
+
+                    <label class="radio-option">
+                        <input
+                            type="radio"
+                            name="paymentArrangement"
+                            value="false"
+                            required
+                        >
+                        <span>Paid In Full</span>
+                    </label>
+
+                    <label class="radio-option">
+                        <input
+                            type="radio"
+                            name="paymentArrangement"
+                            value="true"
+                            required
+                        >
+                        <span>Put on a payment plan</span>
+                    </label>
+                </section>
+
+                <button
+                    type="submit"
+                    id="submitButton"
+                    class="submit-button"
+                >
+                    Submit Feedback
+                </button>
+            </form>
+        </section>
+
+        <footer class="footer">
+            EliteMatch Group · Homeowner Feedback
+        </footer>
+    </main>
+
+    <script>
+        const statusMessage = document.getElementById("statusMessage");
+        const reviewForm = document.getElementById("reviewForm");
+        const submitButton = document.getElementById("submitButton");
+
+        const ratingButtons = document.querySelectorAll(".star");
+        const ratingDescription = document.getElementById("ratingDescription");
+
+        const submitCost = document.getElementById("submitCost");
+        const costFields = document.getElementById("costFields");
+        const totalCost = document.getElementById("totalCost");
+
+        const token = new URLSearchParams(window.location.search).get("token");
+
+        let selectedRating = null;
+        let submissionInProgress = false;
+
+        const ratingLabels = {
+            1: "1 star — Poor",
+            2: "2 stars — Fair",
+            3: "3 stars — Good",
+            4: "4 stars — Very good",
+            5: "5 stars — Excellent"
+        };
+
+        function showStatus(message, type = "info") {
+            statusMessage.textContent = message;
+            statusMessage.className = `status ${type}`;
+            statusMessage.hidden = false;
+        }
+
+        function showForm() {
+            statusMessage.hidden = true;
+            reviewForm.hidden = false;
+        }
+
+        function getErrorMessage(data, fallback) {
+            if (typeof data?.detail === "string") {
+                return data.detail;
+            }
+
+            if (Array.isArray(data?.detail)) {
+                return data.detail
+                    .map(error => error.msg || "Invalid input.")
+                    .join(" ");
+            }
+
+            return fallback;
+        }
+
+        async function validateInvitation() {
+            if (!token) {
+                showStatus(
+                    "This review link is missing its invitation token. " +
+                    "Please use the complete link provided in your email.",
+                    "error"
+                );
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    `/homeowner/review-invitations/validate?token=${encodeURIComponent(token)}`,
+                    {
+                        method: "GET",
+                        headers: {
+                            "Accept": "application/json"
+                        }
+                    }
+                );
+
+                const data = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    showStatus(
+                        getErrorMessage(
+                            data,
+                            "This review link could not be validated."
+                        ),
+                        "error"
+                    );
+                    return;
+                }
+
+                if (data.available !== true) {
+                    showStatus(
+                        "This review invitation is not available.",
+                        "error"
+                    );
+                    return;
+                }
+
+                showForm();
+
+            } catch (error) {
+                showStatus(
+                    "We could not connect to the review service. " +
+                    "Please check your connection and try again.",
+                    "error"
+                );
+            }
+        }
+
+        function selectRating(rating) {
+            selectedRating = rating;
+
+            ratingButtons.forEach(button => {
+                const value = Number(button.dataset.rating);
+                button.classList.toggle("selected", value <= rating);
+                button.setAttribute(
+                    "aria-pressed",
+                    value === rating ? "true" : "false"
+                );
+            });
+
+            ratingDescription.textContent = ratingLabels[rating];
+        }
+
+        ratingButtons.forEach(button => {
+            button.addEventListener("click", () => {
+                selectRating(Number(button.dataset.rating));
+            });
+        });
+
+        submitCost.addEventListener("change", () => {
+            costFields.hidden = !submitCost.checked;
+            totalCost.required = submitCost.checked;
+
+            if (!submitCost.checked) {
+                totalCost.value = "";
+                document.getElementById("costComments").value = "";
+            }
+        });
+
+        reviewForm.addEventListener("submit", async event => {
+            event.preventDefault();
+
+            if (submissionInProgress) {
+                return;
+            }
+
+            if (!selectedRating) {
+                showStatus(
+                    "Please select an overall rating before submitting.",
+                    "error"
+                );
+                return;
+            }
+
+            const paymentArrangement = document.querySelector(
+                'input[name="paymentArrangement"]:checked'
+            );
+
+            if (!paymentArrangement) {
+                showStatus(
+                    "Please select the payment arrangement.",
+                    "error"
+                );
+                return;
+            }
+
+            if (submitCost.checked) {
+                if (
+                    totalCost.value.trim() === "" ||
+                    !Number.isFinite(Number(totalCost.value)) ||
+                    Number(totalCost.value) < 0
+                ) {
+                    showStatus(
+                        "Please enter a valid final total cost.",
+                        "error"
+                    );
+                    return;
+                }
+            }
+
+            const payload = {
+                token: token,
+                rating: selectedRating,
+                payment_plan_agreed: paymentArrangement.value === "true",
+                written_feedback:
+                    document.getElementById("writtenFeedback").value.trim() || null,
+                total_cost_submitted: submitCost.checked,
+                total_cost: submitCost.checked
+                    ? totalCost.value
+                    : null,
+                cost_comments: submitCost.checked
+                    ? document.getElementById("costComments").value.trim() || null
+                    : null
+            };
+
+            submissionInProgress = true;
+            submitButton.disabled = true;
+            submitButton.textContent = "Submitting...";
+
+            try {
+                const response = await fetch("/homeowner/reviews", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    showStatus(
+                        getErrorMessage(
+                            data,
+                            "Your feedback could not be submitted."
+                        ),
+                        "error"
+                    );
+
+                    submissionInProgress = false;
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Submit Feedback";
+                    return;
+                }
+
+                reviewForm.hidden = true;
+
+                showStatus(
+                    "Thank you. Your feedback has been submitted successfully.",
+                    "success"
+                );
+
+            } catch (error) {
+                showStatus(
+                    "We could not connect to the review service. " +
+                    "Your submission may not have been received. " +
+                    "Please contact EliteMatch Group before trying again.",
+                    "error"
+                );
+
+                submissionInProgress = false;
+                submitButton.disabled = false;
+                submitButton.textContent = "Submit Feedback";
+            }
+        });
+
+        validateInvitation();
+    </script>
+</body>
+</html>
