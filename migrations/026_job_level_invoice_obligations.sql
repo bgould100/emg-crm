@@ -8,6 +8,10 @@ ALTER TABLE contractor_invoices
     ADD CONSTRAINT uq_contractor_invoices_id_contractor
     UNIQUE (id, contractor_id);
 
+ALTER TABLE jobs
+    ADD CONSTRAINT uq_jobs_id_contractor
+    UNIQUE (id, contractor_id);
+
 ALTER TABLE job_fee_accruals
     ADD CONSTRAINT uq_job_fee_accruals_id_job_contractor
     UNIQUE (id, job_id, contractor_id);
