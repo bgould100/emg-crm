@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
+from botocore.exceptions import ClientError
 
 from app.services import homeowner_review_delivery
 from app.services.review_tokens import review_token_matches
@@ -121,6 +122,7 @@ def opportunity_owned_by_contractor():
 
         yield {
             "lead_id": lead_id,
+            "service_type": test_specialty,
             "contractor_a": {
                 "contractor_id": contractors[0]["contractor_id"],
                 "email": f"auth-test-a-{suffix.lower()}@example.com",
@@ -151,8 +153,23 @@ def opportunity_owned_by_contractor():
                         """,
                         (contractor_ids,),
                     )
-
+                preserve_financial_records = False
                 if lead_id:
+                    cursor.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM jobs j
+                            JOIN job_fee_accruals a ON a.job_id = j.id
+                            WHERE j.lead_id = (
+                                SELECT id FROM leads WHERE lead_id = %s
+                            )
+                        ) AS has_accrual
+                        """,
+                        (lead_id,),
+                    )
+                    preserve_financial_records = cursor.fetchone()["has_accrual"]
+                if lead_id and not preserve_financial_records:
                     cursor.execute(
                         "SELECT id FROM leads WHERE lead_id = %s",
                         (lead_id,),
@@ -175,10 +192,12 @@ def opportunity_owned_by_contractor():
                             "DELETE FROM status_history WHERE lead_id = %s",
                             (db_lead_id,),
                         )
+
                         cursor.execute(
                             "DELETE FROM photos WHERE lead_id = %s",
                             (db_lead_id,),
                         )
+
                         cursor.execute(
                             """
                             DELETE FROM homeowner_review_delivery_events
@@ -192,6 +211,7 @@ def opportunity_owned_by_contractor():
                             """,
                             (db_lead_id,),
                         )
+
                         cursor.execute(
                             """
                             DELETE FROM job_financial_audit_events
@@ -201,6 +221,7 @@ def opportunity_owned_by_contractor():
                             """,
                             (db_lead_id,),
                         )
+
                         cursor.execute(
                             """
                             DELETE FROM homeowner_review_invitations
@@ -210,6 +231,7 @@ def opportunity_owned_by_contractor():
                             """,
                             (db_lead_id,),
                         )
+
                         cursor.execute(
                             """
                             DELETE FROM homeowner_review_discrepancies
@@ -239,33 +261,7 @@ def opportunity_owned_by_contractor():
                             """,
                             (db_lead_id,),
                         )
-                        cursor.execute(
-                            """
-                            SELECT
-                                j.job_id,
-                                a.id AS fee_accrual_id,
-                                a.accrual_status,
-                                a.accrued_at,
-                                ia.obligation_id
-                            FROM jobs j
-                            JOIN job_fee_accruals a
-                              ON a.job_id = j.id
-                            LEFT JOIN contractor_invoice_obligation_accruals ia
-                              ON ia.fee_accrual_id = a.id
-                            WHERE j.lead_id = %s
-                            """,
-                            (db_lead_id,),
-                        )
-                        print("TEST LEAD INVOICE ASSIGNMENTS:", cursor.fetchall())
-                        cursor.execute(
-                            """
-                            DELETE FROM job_fee_accruals
-                            WHERE job_id IN (
-                                SELECT id FROM jobs WHERE lead_id = %s
-                            )
-                            """,
-                            (db_lead_id,),
-                        )
+
                         cursor.execute(
                             """
                             DELETE FROM job_collections
@@ -280,38 +276,18 @@ def opportunity_owned_by_contractor():
                             "DELETE FROM jobs WHERE lead_id = %s",
                             (db_lead_id,),
                         )
-                        cursor.execute(
-                            """
-                            DELETE FROM homeowner_review_delivery_events
-                            WHERE invitation_id IN (
-                                SELECT id
-                                FROM homeowner_review_invitations
-                                WHERE job_id IN (
-                                    SELECT id FROM jobs WHERE lead_id = %s
-                                )
-                            )
-                            """,
-                            (db_lead_id,),
-                        )
-                        cursor.execute(
-                            """
-                            DELETE FROM homeowner_review_invitations
-                            WHERE job_id IN (
-                                SELECT id FROM jobs WHERE lead_id = %s
-                            )
-                            """,
-                            (db_lead_id,),
-                        )
+
                         cursor.execute(
                             "DELETE FROM opportunities WHERE lead_id = %s",
                             (db_lead_id,),
                         )
+
                         cursor.execute(
                             "DELETE FROM leads WHERE id = %s",
                             (db_lead_id,),
                         )
 
-                if contractor_ids:
+                if contractor_ids and not preserve_financial_records:
                     cursor.execute(
                         """
                         DELETE FROM contractor_accounts
@@ -540,7 +516,7 @@ def test_contractor_inbox_does_not_expose_homeowner_contacts_or_photo_keys(
 
     item = opportunities[0]
     assert item["zip_code"] == "83814"
-    assert item["service_type"] == "Auth API Roofing"
+    assert item["service_type"] == data["service_type"]
     assert item["description"]
     assert item["sent_at"]
     assert "expires_at" in item
@@ -588,7 +564,7 @@ def test_contractor_can_view_own_opportunity_details(
     assert detail["opportunity_id"] == data["opportunity_id"]
     assert detail["status"] == "PENDING"
     assert detail["zip_code"] == "83814"
-    assert detail["service_type"] == "Auth API Roofing"
+    assert detail["service_type"] == opportunity_owned_by_contractor["service_type"]
     assert detail["description"]
     assert detail["sent_at"]
     assert "expires_at" in detail
@@ -1401,7 +1377,30 @@ def test_job_photo_lock_is_set_on_completion_and_never_cleared(
     data = opportunity_owned_by_contractor
     job_id = _accept_test_job(api_client, data)
     _set_test_job_in_progress(api_client, job_id)
-    _approve_test_payment_agreement(api_client, data, job_id)
+    agreement_response = api_client.post(
+        f"/contractor/jobs/{job_id}/payment-agreement",
+        headers={"Origin": TEST_ORIGIN},
+        json={
+            "arrangement_type": "PAYMENT_PLAN",
+            "invoice_total": "1000.00",
+            "down_payment_amount": "0.00",
+            "down_payment_due_date": "2026-11-12",
+            "installment_count": 2,
+            "schedule_type": "MONTHLY",
+            "term_months": 1,
+            "installment_amount": "500.00",
+            "final_installment_amount": "500.00",
+            "plan_start_date": "2026-11-15",
+            "final_due_date": "2026-12-15",
+        },
+    )
+    assert agreement_response.status_code == 201, agreement_response.text
+
+    accept_response = api_client.post(
+        f"/contractor/jobs/{job_id}/payment-agreement/accept",
+        headers={"Origin": TEST_ORIGIN},
+    )
+    assert accept_response.status_code == 200, accept_response.text
 
     # Completing the job should create the permanent photo lock.
     response = api_client.patch(
@@ -1540,12 +1539,67 @@ def test_homeowner_review_invitation_sent_through_ses(
         "client",
         fake_boto_client,
     )
+    deferred_invitations = []
 
-    result = (
-        homeowner_review_delivery.deliver_homeowner_review_invitations(
-            batch_size=1
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, next_attempt_at
+                FROM homeowner_review_invitations
+                WHERE id <> (
+                    SELECT i.id
+                    FROM homeowner_review_invitations i
+                    JOIN jobs j ON j.id = i.job_id
+                    WHERE j.job_id = %s
+                )
+                  AND retry_state = 'ACTIVE'
+                  AND delivery_status IN ('PENDING', 'FAILED')
+                  AND submitted_at IS NULL
+                  AND claimed_until IS NULL
+                """,
+                (job_id,),
+            )
+            deferred_invitations = cursor.fetchall()
+
+            cursor.execute(
+                """
+                UPDATE homeowner_review_invitations
+                SET next_attempt_at = CURRENT_TIMESTAMP + INTERVAL '1 day'
+                WHERE id <> (
+                    SELECT i.id
+                    FROM homeowner_review_invitations i
+                    JOIN jobs j ON j.id = i.job_id
+                    WHERE j.job_id = %s
+                )
+                  AND retry_state = 'ACTIVE'
+                  AND delivery_status IN ('PENDING', 'FAILED')
+                  AND submitted_at IS NULL
+                  AND claimed_until IS NULL
+                """,
+                (job_id,),
+            )
+
+    try:
+        result = (
+            homeowner_review_delivery.deliver_homeowner_review_invitations(
+                batch_size=1
+            )
         )
-    )
+    finally:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    UPDATE homeowner_review_invitations
+                    SET next_attempt_at = %s
+                    WHERE id = %s
+                    """,
+                    [
+                        (row["next_attempt_at"], row["id"])
+                        for row in deferred_invitations
+                    ],
+                )
 
     assert result["claimed_count"] == 1
     assert result["sent_count"] == 1
@@ -1609,7 +1663,9 @@ def test_homeowner_review_invitation_sent_through_ses(
             ]
 
     assert invitation is not None
-    assert invitation["delivery_status"] == "SENT"
+    assert invitation["delivery_status"] == "SENT", (
+        f"result={result!r}; invitation={invitation!r}"
+    )
     assert invitation["retry_state"] == "COMPLETE"
     assert invitation["attempts"] == 1
     assert invitation["email_sent_at"] is not None
@@ -1658,7 +1714,18 @@ def test_homeowner_review_invitation_pauses_after_five_failures(
 
     class FailingSES:
         def send_email(self, **kwargs):
-            raise RuntimeError("Simulated SES delivery failure")
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "MessageRejected",
+                        "Message": "Simulated SES delivery failure",
+                    },
+                    "ResponseMetadata": {
+                        "HTTPStatusCode": 400,
+                    },
+                },
+                "SendEmail",
+            )
 
     def fake_boto_client(service, **kwargs):
         assert service == "ses"

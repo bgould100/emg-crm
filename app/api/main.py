@@ -35,6 +35,11 @@ from app.database.admin_auth import (
     logout_admin,
 )
 from app.database.connection import get_connection
+from app.services.photo_storage import (
+    save_photo,
+    read_photo,
+    delete_photo,
+)
 from app.database.leads import create_lead, get_lead_by_lead_id
 from app.database.contractors import (
     create_contractor,
@@ -1405,14 +1410,7 @@ async def upload_contractor_job_photos(
             detail="Select at least one valid photo to upload.",
         )
 
-    upload_dir = (
-        Path(__file__).resolve().parents[2]
-        / "data"
-        / "uploads"
-    )
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    saved_files = []
+    saved_storage_keys = []
     saved_photos = []
 
     try:
@@ -1472,9 +1470,12 @@ async def upload_contractor_job_photos(
                     content_type,
                     original_filename,
                 ) in uploaded_photos:
-                    file_path = upload_dir / stored_name
-                    file_path.write_bytes(content)
-                    saved_files.append(file_path)
+                    storage_key = save_photo(
+                        stored_name,
+                        content,
+                        content_type,
+                    )
+                    saved_storage_keys.append(storage_key)
 
                     photo_id = f"EMGP-{stored_name[:16].upper()}"
 
@@ -1497,7 +1498,7 @@ async def upload_contractor_job_photos(
                             job["lead_pk"],
                             contractor_pk,
                             job["job_pk"],
-                            f"local/{stored_name}",
+                            storage_key,
                             original_filename,
                             content_type,
                         ),
@@ -1514,12 +1515,24 @@ async def upload_contractor_job_photos(
                         }
                     )
     except HTTPException:
-        for file_path in saved_files:
-            file_path.unlink(missing_ok=True)
+        for storage_key in saved_storage_keys:
+            try:
+                delete_photo(storage_key)
+            except Exception as cleanup_error:
+                print(
+                    f"Photo cleanup failed for {storage_key}: "
+                    f"{type(cleanup_error).__name__}"
+                )
         raise
     except Exception as error:
-        for file_path in saved_files:
-            file_path.unlink(missing_ok=True)
+        for storage_key in saved_storage_keys:
+            try:
+                delete_photo(storage_key)
+            except Exception as cleanup_error:
+                print(
+                    f"Photo cleanup failed for {storage_key}: "
+                    f"{type(cleanup_error).__name__}"
+                )
 
         print(f"Contractor photo storage failed for job {job_id}.")
         raise HTTPException(
@@ -1528,6 +1541,7 @@ async def upload_contractor_job_photos(
         ) from error
 
     return saved_photos
+
 
 @app.delete("/contractor/jobs/{job_id}/photos/{photo_id}")
 def delete_contractor_job_photo(
@@ -1539,7 +1553,7 @@ def delete_contractor_job_photo(
     contractor = require_contractor(request)
     contractor_pk = contractor["contractor_pk"]
 
-    file_path = None
+    storage_key = None
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -1583,28 +1597,7 @@ def delete_contractor_job_photo(
                     detail="Photo deletion is locked for this job.",
                 )
 
-            s3_key = photo["s3_key"]
-
-            if not s3_key.startswith("local/"):
-                raise HTTPException(
-                    status_code=404,
-                    detail="Photo not found.",
-                )
-
-            stored_name = s3_key.removeprefix("local/")
-
-            if not stored_name or Path(stored_name).name != stored_name:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Photo not found.",
-                )
-
-            upload_dir = (
-                Path(__file__).resolve().parents[2]
-                / "data"
-                / "uploads"
-            )
-            file_path = upload_dir / stored_name
+            storage_key = photo["s3_key"]
 
             cursor.execute(
                 """
@@ -1626,11 +1619,20 @@ def delete_contractor_job_photo(
                     detail="Contractor photo not found.",
                 )
 
-    # Remove only the EMG-managed stored file.
-    # The original file on the contractor's device is untouched.
-    file_path.unlink(missing_ok=True)
+    try:
+        delete_photo(storage_key)
+    except Exception as error:
+        print(
+            f"Photo deletion failed for {photo_id}: "
+            f"{type(error).__name__}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Photo record deleted, but photo storage cleanup failed.",
+        ) from error
 
     return {"message": "Photo deleted successfully."}
+
 
 @app.get("/contractor/photos/{photo_id}")
 def contractor_photo(
@@ -1698,40 +1700,6 @@ def contractor_photo(
 
     s3_key = row["s3_key"]
 
-    # This endpoint serves local development files only.
-    # Never interpret a database value as an arbitrary filesystem path.
-    if not s3_key.startswith("local/"):
-        raise HTTPException(
-            status_code=404,
-            detail="Photo not found.",
-        )
-
-    stored_name = s3_key.removeprefix("local/")
-
-    if (
-        not stored_name
-        or Path(stored_name).name != stored_name
-        or "/" in stored_name
-        or "\\" in stored_name
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Photo not found.",
-        )
-
-    upload_dir = (
-        Path(__file__).resolve().parents[2]
-        / "data"
-        / "uploads"
-    )
-    file_path = upload_dir / stored_name
-
-    if not file_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Photo file not found.",
-        )
-
     allowed_types = {
         "image/jpeg",
         "image/png",
@@ -1745,8 +1713,16 @@ def contractor_photo(
             detail="Photo not found.",
         )
 
-    return FileResponse(
-        path=file_path,
+    try:
+        photo_content = read_photo(s3_key)
+    except (FileNotFoundError, AttributeError):
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    return Response(
+        content=photo_content,
         media_type=content_type,
         headers={
             "Cache-Control": "private, no-store",
@@ -1774,31 +1750,6 @@ def admin_photo(photo_id: str, request: Request):
         )
 
     s3_key = row["s3_key"] or ""
-    if not s3_key.startswith("local/"):
-        raise HTTPException(
-            status_code=404,
-            detail="Photo not found.",
-        )
-
-    stored_name = s3_key.removeprefix("local/")
-    if not stored_name or Path(stored_name).name != stored_name:
-        raise HTTPException(
-            status_code=404,
-            detail="Photo not found.",
-        )
-
-    upload_dir = (
-        Path(__file__).resolve().parents[2]
-        / "data"
-        / "uploads"
-    )
-    file_path = upload_dir / stored_name
-
-    if not file_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Photo file not found.",
-        )
 
     content_type = row["content_type"]
     if content_type not in {
@@ -1811,8 +1762,16 @@ def admin_photo(photo_id: str, request: Request):
             detail="Photo not found.",
         )
 
-    return FileResponse(
-        path=file_path,
+    try:
+        photo_content = read_photo(s3_key)
+    except (FileNotFoundError, AttributeError):
+        raise HTTPException(
+            status_code=404,
+            detail="Photo not found.",
+        )
+
+    return Response(
+        content=photo_content,
         media_type=content_type,
         headers={
             "Cache-Control": "private, no-store",
@@ -3104,23 +3063,18 @@ async def submit_homeowner_request(
             detail=str(error),
         ) from error
 
-    # Store images privately on the local development machine.
-    upload_dir = (
-        Path(__file__).resolve().parents[2]
-        / "data"
-        / "uploads"
-    )
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    saved_files = []
+    saved_storage_keys = []
 
     try:
         with get_connection() as connection:
             with connection.cursor() as cursor:
                 for stored_name, content, content_type, original_filename in uploaded_photos:
-                    file_path = upload_dir / stored_name
-                    file_path.write_bytes(content)
-                    saved_files.append(file_path)
+                    storage_key = save_photo(
+                        stored_name,
+                        content,
+                        content_type,
+                    )
+                    saved_storage_keys.append(storage_key)
 
                     cursor.execute(
                         """
@@ -3136,14 +3090,20 @@ async def submit_homeowner_request(
                         (
                             f"EMGP-{stored_name[:16].upper()}",
                             lead["id"],
-                            f"local/{stored_name}",
+                            storage_key,
                             original_filename,
                             content_type,
                         ),
                     )
     except Exception:
-        for file_path in saved_files:
-            file_path.unlink(missing_ok=True)
+        for storage_key in saved_storage_keys:
+            try:
+                delete_photo(storage_key)
+            except Exception as cleanup_error:
+                print(
+                    f"Photo cleanup failed for {storage_key}: "
+                    f"{type(cleanup_error).__name__}"
+                )
 
         print(
             f"Homeowner photo storage failed for lead "
@@ -3156,8 +3116,6 @@ async def submit_homeowner_request(
                 "Please contact EMG before resubmitting."
             ),
         )
-
-    # Use the existing matching engine; never call it with the
     # internal numeric database ID.
     try:
         opportunities = route_opportunities_to_fill_slots(

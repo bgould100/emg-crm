@@ -1,5 +1,6 @@
 
 import json
+from decimal import Decimal
 from typing import Any, Literal
 
 from app.database.connection import get_connection
