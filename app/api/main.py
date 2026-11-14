@@ -544,29 +544,30 @@ def require_admin(request: Request) -> dict:
 # -------------------------
 
 def require_allowed_origin(request: Request) -> None:
-    """Require the configured origin for browser state-changing requests."""
+    """Require an explicitly configured origin for browser state-changing requests."""
 
-    allowed_origin = os.getenv("EMG_ALLOWED_ORIGIN")
-    request_origin = request.headers.get("origin")
+    configured_origins = os.getenv("EMG_ALLOWED_ORIGIN", "")
+    allowed_origins = {
+        origin.strip().rstrip("/")
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    }
+    request_origin = request.headers.get("origin", "").rstrip("/")
 
-    if not allowed_origin:
+    if not allowed_origins:
         raise HTTPException(
             status_code=503,
             detail="Browser origin protection is not configured.",
         )
 
-    if (
-        not request_origin
-        or not secrets.compare_digest(
-            request_origin.rstrip("/"),
-            allowed_origin.rstrip("/"),
-        )
+    if not request_origin or not any(
+        secrets.compare_digest(request_origin, allowed)
+        for allowed in allowed_origins
     ):
         raise HTTPException(
             status_code=403,
             detail="Request origin is not allowed.",
         )
-
 
 def contractor_cookie_secure() -> bool:
     """Use Secure cookies when the deployment runs over HTTPS."""

@@ -1,4 +1,5 @@
 ﻿import os
+import secrets
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -76,13 +77,17 @@ class ContractorPaymentAgreementRequest(BaseModel):
 
 def _authenticated_contractor(request: Request):
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
-        allowed_origin = os.getenv("EMG_ALLOWED_ORIGIN")
-        origin = request.headers.get("origin")
+        configured_origins = os.getenv("EMG_ALLOWED_ORIGIN", "")
+        allowed_origins = {
+            origin.strip().rstrip("/")
+            for origin in configured_origins.split(",")
+            if origin.strip()
+        }
+        origin = request.headers.get("origin", "").rstrip("/")
 
-        if (
-            not allowed_origin
-            or not origin
-            or origin.rstrip("/") != allowed_origin.rstrip("/")
+        if not allowed_origins or not origin or not any(
+            secrets.compare_digest(origin, allowed)
+            for allowed in allowed_origins
         ):
             raise HTTPException(
                 status_code=403,
