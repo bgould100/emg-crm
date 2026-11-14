@@ -1960,20 +1960,14 @@ async function loadJobNotes(container, jobId) {
             container.append(paymentForm);
           }
           if (typeof onCompleted === "function") {
-            const completeButton = actionButton(
-              "Confirm job completed",
-              "",
-              async () => {
-                completeButton.disabled = true;
-                try {
-                  await onCompleted();
-                } catch (error) {
-                  showNotice(error.message, "error");
-                  completeButton.disabled = false;
-                }
-              }
-            );
-            container.append(completeButton);
+            Promise.resolve()
+              .then(() => onCompleted())
+              .catch((error) => {
+                showNotice(
+                  `The payment agreement was approved, but the job status could not be updated: ${error.message}`,
+                  "error"
+                );
+              });
           }
           return;
         }
