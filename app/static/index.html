@@ -2297,7 +2297,11 @@ async function loadJobNotes(container, jobId) {
             renderPhotoPreviews();
 
             message("Job photos uploaded successfully.", "good");
-            await loadJobs();
+            await loadJobPhotoGalleries(gallery, job.job_id, (photosLocked) => {
+              if (uploadSection) {
+                uploadSection.hidden = photosLocked;
+              }
+            });
           } catch (error) {
             uploadMessage.textContent = error.message;
             uploadButton.disabled = selectedFiles.length === 0;
@@ -2505,7 +2509,7 @@ async function loadJobNotes(container, jobId) {
         $("profileZipCodes").value = profile.service_area.join("\n");
         $("profileSpecialties").value = profile.specialties.join("\n");
         showProfileStatus(
-          `Profile loaded. Account status: ${profile.status}; availability: ${profile.availability}.`,
+          `Profile loaded. Account status: ${profile.status}; Availability: ${profile.availability}.`,
           "info"
         );
       } catch (error) {
